@@ -27,7 +27,7 @@ python app.py
 - **UI-слой** (`anpr/ui/main_window.py`) управляет вкладками, пользовательскими действиями и жизненным циклом потоков.
 - **Асинхронные фоновые работники** (`anpr/workers/channel_worker.py`) запускают `asyncio`-цикл внутри `QThread`: чтение кадра, трекинг,  OCR и запись в БД выполняются через `asyncio.to_thread`, поэтому обработка нескольких каналов не блокирует друг друга и UI.
 - **Детекторы и OCR** теперь изолированы: `anpr/detection/yolo_detector.py` отвечает только за детекцию/трекинг номеров, `anpr/recognition/crnn_recognizer.py` — за OCR, `anpr/pipeline/anpr_pipeline.py` агрегирует результаты. `anpr/pipeline/factory.py` собирает компоненты без привязки к UI, а конфигурация путей вынесена в `anpr/config.py`.
-- **Сервисные компоненты** (`detector.py`, `storage.py`, `settings_manager.py`, `logging_manager.py`) предоставляют независимые обязанности по принципам SOLID/DRY/KISS.
+- **Сервисные компоненты** (`anpr_cli.py`, `storage.py`, `settings_manager.py`, `logging_manager.py`) предоставляют независимые обязанности по принципам SOLID/DRY/KISS.
 
 ### Детекция и трекинг
 - **YOLOv8** используется для поиска номерных знаков на кадре. Порог уверенности настраивается в `ModelConfig.DETECTION_CONFIDENCE_THRESHOLD` (`anpr/config.py`).
@@ -74,7 +74,7 @@ python app.py
 - `settings.json` — хранит конфигурацию каналов, сетки, параметр `tracking.best_shots` для агрегации по трекам, `tracking.cooldown_seconds` для подавления повторных срабатываний и `tracking.ocr_min_confidence` для отсечения сомнительных OCR-результатов.
 - `logging` — блок настроек журнала (`level`, `file`, ротация `max_bytes`/`backup_count`) для единого логирования GUI, пайплайна и фоновых потоков.
 - `data/events.db` — создаётся автоматически, хранит последние 100+ событий распознавания.
-- `detector.py` — CLI-обертка, использующая `anpr/detection/yolo_detector.py`, `anpr/recognition/crnn_recognizer.py` и `anpr/pipeline/anpr_pipeline.py`.
+- `anpr_cli.py` — CLI-обертка, использующая `anpr/detection/yolo_detector.py`, `anpr/recognition/crnn_recognizer.py` и `anpr/pipeline/anpr_pipeline.py`.
 - `anpr/detection/yolo_detector.py` — детектор и трекер номерных знаков.
 - `anpr/recognition/crnn_recognizer.py` — загрузка и инференс CRNN.
 - `anpr/pipeline/anpr_pipeline.py` — пайплайн OCR, агрегация по трекам и отрисовка для CLI.
