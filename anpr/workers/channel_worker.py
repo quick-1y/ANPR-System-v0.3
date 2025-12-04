@@ -1,15 +1,30 @@
 import asyncio
+import time
 from datetime import datetime, timezone
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import cv2
 from PyQt5 import QtCore, QtGui
 
-from detector import ANPR_Pipeline, CRNNRecognizer, YOLODetector, Config as ModelConfig
+from anpr.detection.motion_detector import MotionDetector, MotionDetectorConfig
+from anpr.pipeline.factory import build_components
 from logging_manager import get_logger
 from storage import AsyncEventDatabase
 
 logger = get_logger(__name__)
+
+
+class InferenceLimiter:
+    """Пропускает лишние кадры для инференса детектора."""
+
+    def __init__(self, stride: int) -> None:
+        self.stride = max(1, stride)
+        self._counter = 0
+
+    def allow(self) -> bool:
+        should_run = self._counter == 0
+        self._counter = (self._counter + 1) % self.stride
+        return should_run
 
 
 class ChannelWorker(QtCore.QThread):
@@ -19,7 +34,7 @@ class ChannelWorker(QtCore.QThread):
     event_ready = QtCore.pyqtSignal(dict)
     status_ready = QtCore.pyqtSignal(str, str)
 
-    def __init__(self, channel_conf: Dict, db_path: str, parent=None) -> None:
+    def __init__(self, channel_conf: Dict, db_path: str, reconnect_conf: Optional[Dict[str, Any]] = None, parent=None) -> None:
         super().__init__(parent)
         self.channel_conf = channel_conf
         self.db_path = db_path
@@ -27,9 +42,26 @@ class ChannelWorker(QtCore.QThread):
         self.best_shots = int(channel_conf.get("best_shots", 3))
         self.cooldown_seconds = int(channel_conf.get("cooldown_seconds", 5))
         self.min_confidence = float(channel_conf.get("ocr_min_confidence", 0.6))
+        self.detector_frame_stride = max(1, int(channel_conf.get("detector_frame_stride", 2)))
         self.detection_mode = channel_conf.get("detection_mode", "continuous")
         self.motion_threshold = float(channel_conf.get("motion_threshold", 0.01))
-        self._prev_motion_frame: Optional[cv2.Mat] = None
+        self.motion_detector = MotionDetector(
+            MotionDetectorConfig(
+                threshold=self.motion_threshold,
+                frame_stride=int(channel_conf.get("motion_frame_stride", 1)),
+                activation_frames=int(channel_conf.get("motion_activation_frames", 3)),
+                release_frames=int(channel_conf.get("motion_release_frames", 6)),
+            )
+        )
+        self._inference_limiter = InferenceLimiter(self.detector_frame_stride)
+        reconnect_conf = reconnect_conf or {}
+        signal_loss_conf = reconnect_conf.get("signal_loss", {})
+        periodic_conf = reconnect_conf.get("periodic", {})
+        self.reconnect_on_signal_loss = bool(signal_loss_conf.get("enabled", False))
+        self.frame_timeout_seconds = float(signal_loss_conf.get("frame_timeout_seconds", 5))
+        self.retry_interval_seconds = float(signal_loss_conf.get("retry_interval_seconds", 5))
+        self.periodic_reconnect_enabled = bool(periodic_conf.get("enabled", False))
+        self.periodic_reconnect_seconds = float(periodic_conf.get("interval_minutes", 0)) * 60
 
     def _open_capture(self, source: str) -> Optional[cv2.VideoCapture]:
         capture = cv2.VideoCapture(int(source) if source.isnumeric() else source)
@@ -37,18 +69,28 @@ class ChannelWorker(QtCore.QThread):
             return None
         return capture
 
-    def _build_pipeline(self) -> Tuple[ANPR_Pipeline, YOLODetector]:
-        detector = YOLODetector(ModelConfig.YOLO_MODEL_PATH, ModelConfig.DEVICE)
-        recognizer = CRNNRecognizer(ModelConfig.OCR_MODEL_PATH, ModelConfig.DEVICE)
-        return (
-            ANPR_Pipeline(
-                recognizer,
-                self.best_shots,
-                self.cooldown_seconds,
-                min_confidence=self.min_confidence,
-            ),
-            detector,
-        )
+    async def _open_with_retries(self, source: str, channel_name: str) -> Optional[cv2.VideoCapture]:
+        """Подключает источник с учетом настроек переподключения."""
+
+        while self._running:
+            capture = await asyncio.to_thread(self._open_capture, source)
+            if capture is not None:
+                self.status_ready.emit(channel_name, "")
+                return capture
+
+            if not self.reconnect_on_signal_loss:
+                self.status_ready.emit(channel_name, "Нет сигнала")
+                return None
+
+            self.status_ready.emit(
+                channel_name,
+                f"Нет сигнала, повтор через {int(self.retry_interval_seconds)}с",
+            )
+            await asyncio.sleep(max(0.1, self.retry_interval_seconds))
+        return None
+
+    def _build_pipeline(self) -> Tuple[object, object]:
+        return build_components(self.best_shots, self.cooldown_seconds, self.min_confidence)
 
     def _region_rect(self, frame_shape: Tuple[int, int, int]) -> Tuple[int, int, int, int]:
         height, width, _ = frame_shape
@@ -75,22 +117,7 @@ class ChannelWorker(QtCore.QThread):
         if self.detection_mode != "motion":
             return True
 
-        if roi_frame.size == 0:
-            return False
-
-        gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        if self._prev_motion_frame is None:
-            self._prev_motion_frame = gray
-            return False
-
-        frame_delta = cv2.absdiff(self._prev_motion_frame, gray)
-        self._prev_motion_frame = gray
-
-        _, thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)
-        motion_ratio = cv2.countNonZero(thresh) / float(gray.size)
-        return motion_ratio > self.motion_threshold
+        return self.motion_detector.update(roi_frame)
 
     @staticmethod
     def _offset_detections(detections: list[dict], roi_rect: Tuple[int, int, int, int]) -> list[dict]:
@@ -145,21 +172,55 @@ class ChannelWorker(QtCore.QThread):
         storage = AsyncEventDatabase(self.db_path)
 
         source = str(self.channel_conf.get("source", "0"))
-        capture = await asyncio.to_thread(self._open_capture, source)
+        channel_name = self.channel_conf.get("name", "Канал")
+        capture = await self._open_with_retries(source, channel_name)
         if capture is None:
-            self.status_ready.emit(self.channel_conf.get("name", "Канал"), "Нет сигнала")
             logger.warning("Не удалось открыть источник %s для канала %s", source, self.channel_conf)
             return
-
-        channel_name = self.channel_conf.get("name", "Канал")
         logger.info("Канал %s запущен (источник=%s)", channel_name, source)
         waiting_for_motion = False
+        last_frame_ts = time.monotonic()
+        last_reconnect_ts = last_frame_ts
         while self._running:
+            now = time.monotonic()
+            if (
+                self.periodic_reconnect_enabled
+                and self.periodic_reconnect_seconds > 0
+                and now - last_reconnect_ts >= self.periodic_reconnect_seconds
+            ):
+                self.status_ready.emit(channel_name, "Плановое переподключение...")
+                capture.release()
+                capture = await self._open_with_retries(source, channel_name)
+                if capture is None:
+                    logger.warning("Переподключение не удалось для канала %s", channel_name)
+                    break
+                last_reconnect_ts = time.monotonic()
+                last_frame_ts = last_reconnect_ts
+                continue
+
             ret, frame = await asyncio.to_thread(capture.read)
-            if not ret:
-                self.status_ready.emit(channel_name, "Поток остановлен")
-                logger.warning("Поток остановлен для канала %s", channel_name)
-                break
+            if not ret or frame is None:
+                if not self.reconnect_on_signal_loss:
+                    self.status_ready.emit(channel_name, "Поток остановлен")
+                    logger.warning("Поток остановлен для канала %s", channel_name)
+                    break
+
+                if time.monotonic() - last_frame_ts < self.frame_timeout_seconds:
+                    await asyncio.sleep(0.05)
+                    continue
+
+                self.status_ready.emit(channel_name, "Потеря сигнала, переподключение...")
+                logger.warning("Потеря сигнала на канале %s, выполняем переподключение", channel_name)
+                capture.release()
+                capture = await self._open_with_retries(source, channel_name)
+                if capture is None:
+                    logger.warning("Переподключение не удалось для канала %s", channel_name)
+                    break
+                last_reconnect_ts = time.monotonic()
+                last_frame_ts = last_reconnect_ts
+                continue
+
+            last_frame_ts = time.monotonic()
 
             roi_frame, roi_rect = self._extract_region(frame)
             motion_detected = self._motion_detected(roi_frame)
@@ -172,10 +233,11 @@ class ChannelWorker(QtCore.QThread):
                 if waiting_for_motion:
                     self.status_ready.emit(channel_name, "Движение обнаружено")
                 waiting_for_motion = False
-                detections = await asyncio.to_thread(detector.track, roi_frame)
-                detections = self._offset_detections(detections, roi_rect)
-                results = await asyncio.to_thread(pipeline.process_frame, frame, detections)
-                await self._process_events(storage, source, results, channel_name)
+                if self._inference_limiter.allow():
+                    detections = await asyncio.to_thread(detector.track, roi_frame)
+                    detections = self._offset_detections(detections, roi_rect)
+                    results = await asyncio.to_thread(pipeline.process_frame, frame, detections)
+                    await self._process_events(storage, source, results, channel_name)
 
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             height, width, channel = rgb_frame.shape

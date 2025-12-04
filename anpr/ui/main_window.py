@@ -220,6 +220,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.setCentralWidget(self.tabs)
         self._refresh_events_table()
+        self._start_channels()
 
     # ------------------ Мониторинг ------------------
     def _build_monitor_tab(self) -> QtWidgets.QWidget:
@@ -233,10 +234,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.grid_selector.setCurrentText(self.settings.get_grid())
         self.grid_selector.currentTextChanged.connect(self._on_grid_changed)
         controls.addWidget(self.grid_selector)
-
-        self.start_button = QtWidgets.QPushButton("Запустить")
-        self.start_button.clicked.connect(self._start_channels)
-        controls.addWidget(self.start_button)
 
         controls.addStretch()
         controls.addWidget(QtWidgets.QLabel("Последнее событие:"))
@@ -295,8 +292,16 @@ class MainWindow(QtWidgets.QMainWindow):
     def _start_channels(self) -> None:
         self._stop_workers()
         self.channel_workers = []
+        reconnect_conf = self.settings.get_reconnect()
         for channel_conf in self.settings.get_channels():
-            worker = ChannelWorker(channel_conf, self.settings.get_db_path())
+            source = str(channel_conf.get("source", "")).strip()
+            channel_name = channel_conf.get("name", "Канал")
+            if not source:
+                label = self.channel_labels.get(channel_name)
+                if label:
+                    label.set_status("Нет источника")
+                continue
+            worker = ChannelWorker(channel_conf, self.settings.get_db_path(), reconnect_conf)
             worker.frame_ready.connect(self._update_frame)
             worker.event_ready.connect(self._handle_event)
             worker.status_ready.connect(self._handle_status)
@@ -471,23 +476,61 @@ class MainWindow(QtWidgets.QMainWindow):
         self.preview.roi_changed.connect(self._on_roi_drawn)
         form_container.addWidget(self.preview)
 
-        form_layout = QtWidgets.QFormLayout()
+        # Общие настройки
+        general_group = QtWidgets.QGroupBox("Общие настройки")
+        general_form = QtWidgets.QFormLayout(general_group)
+        self.reconnect_on_loss_checkbox = QtWidgets.QCheckBox("Переподключение при потере сигнала")
+        general_form.addRow(self.reconnect_on_loss_checkbox)
+
+        self.frame_timeout_input = QtWidgets.QSpinBox()
+        self.frame_timeout_input.setRange(1, 300)
+        self.frame_timeout_input.setSuffix(" с")
+        self.frame_timeout_input.setToolTip("Сколько секунд ждать кадр перед попыткой переподключения")
+        general_form.addRow("Таймаут ожидания кадра:", self.frame_timeout_input)
+
+        self.retry_interval_input = QtWidgets.QSpinBox()
+        self.retry_interval_input.setRange(1, 300)
+        self.retry_interval_input.setSuffix(" с")
+        self.retry_interval_input.setToolTip("Интервал между попытками переподключения при потере сигнала")
+        general_form.addRow("Интервал между попытками:", self.retry_interval_input)
+
+        self.periodic_reconnect_checkbox = QtWidgets.QCheckBox("Переподключение по таймеру")
+        general_form.addRow(self.periodic_reconnect_checkbox)
+
+        self.periodic_interval_input = QtWidgets.QSpinBox()
+        self.periodic_interval_input.setRange(1, 1440)
+        self.periodic_interval_input.setSuffix(" мин")
+        self.periodic_interval_input.setToolTip("Плановое переподключение каждые N минут")
+        general_form.addRow("Интервал переподключения:", self.periodic_interval_input)
+
+        save_general_btn = QtWidgets.QPushButton("Сохранить общие настройки")
+        save_general_btn.clicked.connect(self._save_general_settings)
+        general_form.addRow(save_general_btn)
+        form_container.addWidget(general_group)
+
+        # Блок настроек канала
+        channel_group = QtWidgets.QGroupBox("Канал")
+        channel_form = QtWidgets.QFormLayout(channel_group)
         self.channel_name_input = QtWidgets.QLineEdit()
         self.channel_source_input = QtWidgets.QLineEdit()
-        form_layout.addRow("Название:", self.channel_name_input)
-        form_layout.addRow("Источник/RTSP:", self.channel_source_input)
+        channel_form.addRow("Название:", self.channel_name_input)
+        channel_form.addRow("Источник/RTSP:", self.channel_source_input)
+        form_container.addWidget(channel_group)
 
+        # Блок распознавания
+        recognition_group = QtWidgets.QGroupBox("Распознавание")
+        recognition_form = QtWidgets.QFormLayout(recognition_group)
         self.best_shots_input = QtWidgets.QSpinBox()
         self.best_shots_input.setRange(1, 50)
         self.best_shots_input.setToolTip("Количество бестшотов, участвующих в консенсусе трека")
-        form_layout.addRow("Бестшоты на трек:", self.best_shots_input)
+        recognition_form.addRow("Бестшоты на трек:", self.best_shots_input)
 
         self.cooldown_input = QtWidgets.QSpinBox()
         self.cooldown_input.setRange(0, 3600)
         self.cooldown_input.setToolTip(
             "Интервал (в секундах), в течение которого не создается повторное событие для того же номера"
         )
-        form_layout.addRow("Пауза повтора (сек):", self.cooldown_input)
+        recognition_form.addRow("Пауза повтора (сек):", self.cooldown_input)
 
         self.min_conf_input = QtWidgets.QDoubleSpinBox()
         self.min_conf_input.setRange(0.0, 1.0)
@@ -496,13 +539,49 @@ class MainWindow(QtWidgets.QMainWindow):
         self.min_conf_input.setToolTip(
             "Минимальная уверенность OCR (0-1) для приема результата; ниже — помечается как нечитаемое"
         )
-        form_layout.addRow("Мин. уверенность OCR:", self.min_conf_input)
+        recognition_form.addRow("Мин. уверенность OCR:", self.min_conf_input)
+        form_container.addWidget(recognition_group)
 
+        # Блок детектора движения
+        motion_group = QtWidgets.QGroupBox("Детектор движения")
+        motion_form = QtWidgets.QFormLayout(motion_group)
         self.detection_mode_input = QtWidgets.QComboBox()
         self.detection_mode_input.addItem("Постоянное", "continuous")
         self.detection_mode_input.addItem("Детектор движения", "motion")
-        form_layout.addRow("Обнаружение ТС:", self.detection_mode_input)
+        motion_form.addRow("Обнаружение ТС:", self.detection_mode_input)
 
+        self.detector_stride_input = QtWidgets.QSpinBox()
+        self.detector_stride_input.setRange(1, 12)
+        self.detector_stride_input.setToolTip(
+            "Запускать YOLO на каждом N-м кадре в зоне распознавания, чтобы снизить нагрузку"
+        )
+        motion_form.addRow("Шаг инференса (кадр):", self.detector_stride_input)
+
+        self.motion_threshold_input = QtWidgets.QDoubleSpinBox()
+        self.motion_threshold_input.setRange(0.0, 1.0)
+        self.motion_threshold_input.setDecimals(3)
+        self.motion_threshold_input.setSingleStep(0.005)
+        self.motion_threshold_input.setToolTip("Порог чувствительности по площади изменения внутри ROI")
+        motion_form.addRow("Порог движения:", self.motion_threshold_input)
+
+        self.motion_stride_input = QtWidgets.QSpinBox()
+        self.motion_stride_input.setRange(1, 30)
+        self.motion_stride_input.setToolTip("Обрабатывать каждый N-й кадр для поиска движения")
+        motion_form.addRow("Частота анализа (кадр):", self.motion_stride_input)
+
+        self.motion_activation_frames_input = QtWidgets.QSpinBox()
+        self.motion_activation_frames_input.setRange(1, 60)
+        self.motion_activation_frames_input.setToolTip("Сколько кадров подряд должно быть движение, чтобы включить распознавание")
+        motion_form.addRow("Мин. кадров с движением:", self.motion_activation_frames_input)
+
+        self.motion_release_frames_input = QtWidgets.QSpinBox()
+        self.motion_release_frames_input.setRange(1, 120)
+        self.motion_release_frames_input.setToolTip("Сколько кадров без движения нужно, чтобы остановить распознавание")
+        motion_form.addRow("Мин. кадров без движения:", self.motion_release_frames_input)
+        form_container.addWidget(motion_group)
+
+        # Блок зоны распознавания
+        roi_group = QtWidgets.QGroupBox("Зона распознавания")
         roi_layout = QtWidgets.QGridLayout()
         self.roi_x_input = QtWidgets.QSpinBox()
         self.roi_x_input.setRange(0, 100)
@@ -524,19 +603,20 @@ class MainWindow(QtWidgets.QMainWindow):
         roi_layout.addWidget(self.roi_w_input, 2, 1)
         roi_layout.addWidget(QtWidgets.QLabel("Высота (%):"), 3, 0)
         roi_layout.addWidget(self.roi_h_input, 3, 1)
-        form_layout.addRow("Область распознавания:", roi_layout)
-
         refresh_btn = QtWidgets.QPushButton("Обновить кадр")
         refresh_btn.clicked.connect(self._refresh_preview_frame)
-        form_layout.addRow(refresh_btn)
+        roi_layout.addWidget(refresh_btn, 4, 0, 1, 2)
+        roi_group.setLayout(roi_layout)
+        form_container.addWidget(roi_group)
 
         save_btn = QtWidgets.QPushButton("Сохранить")
         save_btn.clicked.connect(self._save_channel)
-        form_layout.addRow(save_btn)
+        form_container.addWidget(save_btn)
+        form_container.addStretch()
 
-        form_container.addLayout(form_layout)
         layout.addLayout(form_container)
 
+        self._load_general_settings()
         self._reload_channels_list()
         return widget
 
@@ -546,6 +626,33 @@ class MainWindow(QtWidgets.QMainWindow):
             self.channels_list.addItem(channel.get("name", "Канал"))
         if self.channels_list.count():
             self.channels_list.setCurrentRow(0)
+
+    def _load_general_settings(self) -> None:
+        reconnect = self.settings.get_reconnect()
+        signal_loss = reconnect.get("signal_loss", {})
+        periodic = reconnect.get("periodic", {})
+
+        self.reconnect_on_loss_checkbox.setChecked(bool(signal_loss.get("enabled", True)))
+        self.frame_timeout_input.setValue(int(signal_loss.get("frame_timeout_seconds", 5)))
+        self.retry_interval_input.setValue(int(signal_loss.get("retry_interval_seconds", 5)))
+
+        self.periodic_reconnect_checkbox.setChecked(bool(periodic.get("enabled", False)))
+        self.periodic_interval_input.setValue(int(periodic.get("interval_minutes", 60)))
+
+    def _save_general_settings(self) -> None:
+        reconnect_conf = {
+            "signal_loss": {
+                "enabled": self.reconnect_on_loss_checkbox.isChecked(),
+                "frame_timeout_seconds": int(self.frame_timeout_input.value()),
+                "retry_interval_seconds": int(self.retry_interval_input.value()),
+            },
+            "periodic": {
+                "enabled": self.periodic_reconnect_checkbox.isChecked(),
+                "interval_minutes": int(self.periodic_interval_input.value()),
+            },
+        }
+        self.settings.save_reconnect(reconnect_conf)
+        self._start_channels()
 
     def _load_channel_form(self, index: int) -> None:
         channels = self.settings.get_channels()
@@ -557,9 +664,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cooldown_input.setValue(int(channel.get("cooldown_seconds", 5)))
             self.min_conf_input.setValue(float(channel.get("ocr_min_confidence", 0.6)))
 
+            self.motion_threshold_input.setValue(float(channel.get("motion_threshold", 0.01)))
+            self.motion_stride_input.setValue(int(channel.get("motion_frame_stride", 1)))
+            self.motion_activation_frames_input.setValue(int(channel.get("motion_activation_frames", 3)))
+            self.motion_release_frames_input.setValue(int(channel.get("motion_release_frames", 6)))
+
             mode = channel.get("detection_mode", "continuous")
             mode_index = max(0, self.detection_mode_input.findData(mode))
             self.detection_mode_input.setCurrentIndex(mode_index)
+            self.detector_stride_input.setValue(int(channel.get("detector_frame_stride", 2)))
 
             region = channel.get("region", {})
             self.roi_x_input.setValue(int(region.get("x", 0)))
@@ -589,12 +702,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 "ocr_min_confidence": self.settings.get_min_confidence(),
                 "region": {"x": 0, "y": 0, "width": 100, "height": 100},
                 "detection_mode": "continuous",
+                "detector_frame_stride": 2,
                 "motion_threshold": 0.01,
+                "motion_frame_stride": 1,
+                "motion_activation_frames": 3,
+                "motion_release_frames": 6,
             }
         )
         self.settings.save_channels(channels)
         self._reload_channels_list()
         self._draw_grid()
+        self._start_channels()
 
     def _remove_channel(self) -> None:
         index = self.channels_list.currentRow()
@@ -604,6 +722,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.save_channels(channels)
             self._reload_channels_list()
             self._draw_grid()
+            self._start_channels()
 
     def _save_channel(self) -> None:
         index = self.channels_list.currentRow()
@@ -615,6 +734,11 @@ class MainWindow(QtWidgets.QMainWindow):
             channels[index]["cooldown_seconds"] = int(self.cooldown_input.value())
             channels[index]["ocr_min_confidence"] = float(self.min_conf_input.value())
             channels[index]["detection_mode"] = self.detection_mode_input.currentData()
+            channels[index]["detector_frame_stride"] = int(self.detector_stride_input.value())
+            channels[index]["motion_threshold"] = float(self.motion_threshold_input.value())
+            channels[index]["motion_frame_stride"] = int(self.motion_stride_input.value())
+            channels[index]["motion_activation_frames"] = int(self.motion_activation_frames_input.value())
+            channels[index]["motion_release_frames"] = int(self.motion_release_frames_input.value())
 
             region = {
                 "x": int(self.roi_x_input.value()),
@@ -629,6 +753,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.save_channels(channels)
             self._reload_channels_list()
             self._draw_grid()
+            self._start_channels()
 
     def _on_roi_drawn(self, roi: Dict[str, int]) -> None:
         self.roi_x_input.blockSignals(True)

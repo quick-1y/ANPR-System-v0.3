@@ -15,9 +15,24 @@
         "height": 100
       },
       "detection_mode": "continuous",
-      "motion_threshold": 0.01
+      "detector_frame_stride": 2,
+      "motion_threshold": 0.01,
+      "motion_frame_stride": 1,
+      "motion_activation_frames": 3,
+      "motion_release_frames": 6
     }
   ],
+  "reconnect": {
+    "signal_loss": {
+      "enabled": true,
+      "frame_timeout_seconds": 5,
+      "retry_interval_seconds": 5
+    },
+    "periodic": {
+      "enabled": false,
+      "interval_minutes": 60
+    }
+  },
   "storage": {
     "events_db": "data/events.db"
   },
