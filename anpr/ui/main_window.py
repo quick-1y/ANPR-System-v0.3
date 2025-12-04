@@ -220,6 +220,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.setCentralWidget(self.tabs)
         self._refresh_events_table()
+        self._start_channels()
 
     # ------------------ Мониторинг ------------------
     def _build_monitor_tab(self) -> QtWidgets.QWidget:
@@ -233,10 +234,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.grid_selector.setCurrentText(self.settings.get_grid())
         self.grid_selector.currentTextChanged.connect(self._on_grid_changed)
         controls.addWidget(self.grid_selector)
-
-        self.start_button = QtWidgets.QPushButton("Запустить")
-        self.start_button.clicked.connect(self._start_channels)
-        controls.addWidget(self.start_button)
 
         controls.addStretch()
         controls.addWidget(QtWidgets.QLabel("Последнее событие:"))
@@ -296,6 +293,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stop_workers()
         self.channel_workers = []
         for channel_conf in self.settings.get_channels():
+            source = str(channel_conf.get("source", "")).strip()
+            channel_name = channel_conf.get("name", "Канал")
+            if not source:
+                label = self.channel_labels.get(channel_name)
+                if label:
+                    label.set_status("Нет источника")
+                continue
             worker = ChannelWorker(channel_conf, self.settings.get_db_path())
             worker.frame_ready.connect(self._update_frame)
             worker.event_ready.connect(self._handle_event)
@@ -647,6 +651,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.save_channels(channels)
         self._reload_channels_list()
         self._draw_grid()
+        self._start_channels()
 
     def _remove_channel(self) -> None:
         index = self.channels_list.currentRow()
@@ -656,6 +661,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.save_channels(channels)
             self._reload_channels_list()
             self._draw_grid()
+            self._start_channels()
 
     def _save_channel(self) -> None:
         index = self.channels_list.currentRow()
@@ -686,6 +692,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.save_channels(channels)
             self._reload_channels_list()
             self._draw_grid()
+            self._start_channels()
 
     def _on_roi_drawn(self, roi: Dict[str, int]) -> None:
         self.roi_x_input.blockSignals(True)
