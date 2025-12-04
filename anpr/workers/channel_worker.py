@@ -132,8 +132,24 @@ class ChannelWorker(QtCore.QThread):
             adjusted.append(det_copy)
         return adjusted
 
+    @staticmethod
+    def _to_qimage(frame: cv2.Mat) -> Optional[QtGui.QImage]:
+        if frame is None or frame.size == 0:
+            return None
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        height, width, channels = rgb_frame.shape
+        bytes_per_line = channels * width
+        return QtGui.QImage(
+            rgb_frame.data, width, height, bytes_per_line, QtGui.QImage.Format_RGB888
+        ).copy()
+
     async def _process_events(
-        self, storage: AsyncEventDatabase, source: str, results: list[dict], channel_name: str
+        self,
+        storage: AsyncEventDatabase,
+        source: str,
+        results: list[dict],
+        channel_name: str,
+        frame: cv2.Mat,
     ) -> None:
         for res in results:
             if res.get("unreadable"):
@@ -151,6 +167,10 @@ class ChannelWorker(QtCore.QThread):
                     "confidence": res.get("confidence", 0.0),
                     "source": source,
                 }
+                x1, y1, x2, y2 = res.get("bbox", (0, 0, 0, 0))
+                plate_crop = frame[y1:y2, x1:x2] if frame is not None else None
+                event["frame_image"] = self._to_qimage(frame)
+                event["plate_image"] = self._to_qimage(plate_crop) if plate_crop is not None else None
                 event["id"] = await storage.insert_event_async(
                     channel=event["channel"],
                     plate=event["plate"],
@@ -237,7 +257,7 @@ class ChannelWorker(QtCore.QThread):
                     detections = await asyncio.to_thread(detector.track, roi_frame)
                     detections = self._offset_detections(detections, roi_rect)
                     results = await asyncio.to_thread(pipeline.process_frame, frame, detections)
-                    await self._process_events(storage, source, results, channel_name)
+                    await self._process_events(storage, source, results, channel_name, frame)
 
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             height, width, channel = rgb_frame.shape
