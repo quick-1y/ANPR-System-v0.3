@@ -23,7 +23,11 @@ class SettingsManager:
                     "ocr_min_confidence": 0.6,
                     "region": {"x": 0, "y": 0, "width": 100, "height": 100},
                     "detection_mode": "continuous",
+                    "detector_frame_stride": 2,
                     "motion_threshold": 0.01,
+                    "motion_frame_stride": 1,
+                    "motion_activation_frames": 3,
+                    "motion_release_frames": 6,
                 },
             ],
             "storage": {"events_db": "data/events.db"},
@@ -69,7 +73,11 @@ class SettingsManager:
             "ocr_min_confidence": float(tracking_defaults.get("ocr_min_confidence", 0.6)),
             "region": {"x": 0, "y": 0, "width": 100, "height": 100},
             "detection_mode": "continuous",
+            "detector_frame_stride": 2,
             "motion_threshold": 0.01,
+            "motion_frame_stride": 1,
+            "motion_activation_frames": 3,
+            "motion_release_frames": 6,
         }
 
     def _fill_channel_defaults(self, channel: Dict[str, Any], tracking_defaults: Dict[str, Any]) -> bool:

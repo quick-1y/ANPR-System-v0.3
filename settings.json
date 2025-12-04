@@ -15,7 +15,11 @@
         "height": 100
       },
       "detection_mode": "continuous",
-      "motion_threshold": 0.01
+      "detector_frame_stride": 2,
+      "motion_threshold": 0.01,
+      "motion_frame_stride": 1,
+      "motion_activation_frames": 3,
+      "motion_release_frames": 6
     }
   ],
   "storage": {
