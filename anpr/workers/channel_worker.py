@@ -13,6 +13,19 @@ from storage import AsyncEventDatabase
 logger = get_logger(__name__)
 
 
+class InferenceLimiter:
+    """Пропускает лишние кадры для инференса детектора."""
+
+    def __init__(self, stride: int) -> None:
+        self.stride = max(1, stride)
+        self._counter = 0
+
+    def allow(self) -> bool:
+        should_run = self._counter == 0
+        self._counter = (self._counter + 1) % self.stride
+        return should_run
+
+
 class ChannelWorker(QtCore.QThread):
     """Background worker that captures frames, runs ANPR pipeline and emits UI events."""
 
@@ -28,6 +41,7 @@ class ChannelWorker(QtCore.QThread):
         self.best_shots = int(channel_conf.get("best_shots", 3))
         self.cooldown_seconds = int(channel_conf.get("cooldown_seconds", 5))
         self.min_confidence = float(channel_conf.get("ocr_min_confidence", 0.6))
+        self.detector_frame_stride = max(1, int(channel_conf.get("detector_frame_stride", 2)))
         self.detection_mode = channel_conf.get("detection_mode", "continuous")
         self.motion_threshold = float(channel_conf.get("motion_threshold", 0.01))
         self.motion_detector = MotionDetector(
@@ -38,6 +52,7 @@ class ChannelWorker(QtCore.QThread):
                 release_frames=int(channel_conf.get("motion_release_frames", 6)),
             )
         )
+        self._inference_limiter = InferenceLimiter(self.detector_frame_stride)
 
     def _open_capture(self, source: str) -> Optional[cv2.VideoCapture]:
         capture = cv2.VideoCapture(int(source) if source.isnumeric() else source)
@@ -155,10 +170,11 @@ class ChannelWorker(QtCore.QThread):
                 if waiting_for_motion:
                     self.status_ready.emit(channel_name, "Движение обнаружено")
                 waiting_for_motion = False
-                detections = await asyncio.to_thread(detector.track, roi_frame)
-                detections = self._offset_detections(detections, roi_rect)
-                results = await asyncio.to_thread(pipeline.process_frame, frame, detections)
-                await self._process_events(storage, source, results, channel_name)
+                if self._inference_limiter.allow():
+                    detections = await asyncio.to_thread(detector.track, roi_frame)
+                    detections = self._offset_detections(detections, roi_rect)
+                    results = await asyncio.to_thread(pipeline.process_frame, frame, detections)
+                    await self._process_events(storage, source, results, channel_name)
 
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             height, width, channel = rgb_frame.shape

@@ -513,6 +513,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.detection_mode_input.addItem("Детектор движения", "motion")
         motion_form.addRow("Обнаружение ТС:", self.detection_mode_input)
 
+        self.detector_stride_input = QtWidgets.QSpinBox()
+        self.detector_stride_input.setRange(1, 12)
+        self.detector_stride_input.setToolTip(
+            "Запускать YOLO на каждом N-м кадре в зоне распознавания, чтобы снизить нагрузку"
+        )
+        motion_form.addRow("Шаг инференса (кадр):", self.detector_stride_input)
+
         self.motion_threshold_input = QtWidgets.QDoubleSpinBox()
         self.motion_threshold_input.setRange(0.0, 1.0)
         self.motion_threshold_input.setDecimals(3)
@@ -600,6 +607,7 @@ class MainWindow(QtWidgets.QMainWindow):
             mode = channel.get("detection_mode", "continuous")
             mode_index = max(0, self.detection_mode_input.findData(mode))
             self.detection_mode_input.setCurrentIndex(mode_index)
+            self.detector_stride_input.setValue(int(channel.get("detector_frame_stride", 2)))
 
             region = channel.get("region", {})
             self.roi_x_input.setValue(int(region.get("x", 0)))
@@ -629,6 +637,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "ocr_min_confidence": self.settings.get_min_confidence(),
                 "region": {"x": 0, "y": 0, "width": 100, "height": 100},
                 "detection_mode": "continuous",
+                "detector_frame_stride": 2,
                 "motion_threshold": 0.01,
                 "motion_frame_stride": 1,
                 "motion_activation_frames": 3,
@@ -658,6 +667,7 @@ class MainWindow(QtWidgets.QMainWindow):
             channels[index]["cooldown_seconds"] = int(self.cooldown_input.value())
             channels[index]["ocr_min_confidence"] = float(self.min_conf_input.value())
             channels[index]["detection_mode"] = self.detection_mode_input.currentData()
+            channels[index]["detector_frame_stride"] = int(self.detector_stride_input.value())
             channels[index]["motion_threshold"] = float(self.motion_threshold_input.value())
             channels[index]["motion_frame_stride"] = int(self.motion_stride_input.value())
             channels[index]["motion_activation_frames"] = int(self.motion_activation_frames_input.value())
