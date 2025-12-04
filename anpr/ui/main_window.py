@@ -191,8 +191,83 @@ class ROIEditor(QtWidgets.QLabel):
         self.update()
 
 
+class EventDetailView(QtWidgets.QWidget):
+    """Отображение выбранного события: метаданные, кадр и область номера."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        layout = QtWidgets.QVBoxLayout(self)
+        header = QtWidgets.QFormLayout()
+        self.time_label = QtWidgets.QLabel("—")
+        self.channel_label = QtWidgets.QLabel("—")
+        self.plate_label = QtWidgets.QLabel("—")
+        self.conf_label = QtWidgets.QLabel("—")
+        header.addRow("Дата и время:", self.time_label)
+        header.addRow("Канал:", self.channel_label)
+        header.addRow("Гос. номер:", self.plate_label)
+        header.addRow("Уверенность:", self.conf_label)
+        layout.addLayout(header)
+
+        previews = QtWidgets.QHBoxLayout()
+        self.frame_preview = self._build_preview("Кадр распознавания")
+        self.plate_preview = self._build_preview("Кадр номера")
+        previews.addWidget(self.frame_preview)
+        previews.addWidget(self.plate_preview)
+        layout.addLayout(previews)
+
+    def _build_preview(self, title: str) -> QtWidgets.QGroupBox:
+        group = QtWidgets.QGroupBox(title)
+        wrapper = QtWidgets.QVBoxLayout(group)
+        label = QtWidgets.QLabel("Нет изображения")
+        label.setAlignment(QtCore.Qt.AlignCenter)
+        label.setMinimumSize(200, 140)
+        label.setStyleSheet("background-color: #111; color: #888; border: 1px solid #444;")
+        label.setScaledContents(True)
+        wrapper.addWidget(label)
+        group.display_label = label  # type: ignore[attr-defined]
+        return group
+
+    def clear(self) -> None:
+        self.time_label.setText("—")
+        self.channel_label.setText("—")
+        self.plate_label.setText("—")
+        self.conf_label.setText("—")
+        for group in (self.frame_preview, self.plate_preview):
+            group.display_label.setPixmap(QtGui.QPixmap())  # type: ignore[attr-defined]
+            group.display_label.setText("Нет изображения")  # type: ignore[attr-defined]
+
+    def set_event(
+        self,
+        event: Optional[Dict],
+        frame_image: Optional[QtGui.QImage] = None,
+        plate_image: Optional[QtGui.QImage] = None,
+    ) -> None:
+        if event is None:
+            self.clear()
+            return
+
+        self.time_label.setText(event.get("timestamp", "—"))
+        self.channel_label.setText(event.get("channel", "—"))
+        plate = event.get("plate") or "—"
+        self.plate_label.setText(plate)
+        conf = event.get("confidence")
+        self.conf_label.setText(f"{float(conf):.2f}" if conf is not None else "—")
+
+        self._set_image(self.frame_preview, frame_image)
+        self._set_image(self.plate_preview, plate_image)
+
+    def _set_image(self, group: QtWidgets.QGroupBox, image: Optional[QtGui.QImage]) -> None:
+        label: QtWidgets.QLabel = group.display_label  # type: ignore[attr-defined]
+        if image is None:
+            label.setPixmap(QtGui.QPixmap())
+            label.setText("Нет изображения")
+            return
+        label.setText("")
+        label.setPixmap(QtGui.QPixmap.fromImage(image))
+
+
 class MainWindow(QtWidgets.QMainWindow):
-    """Главное окно приложения ANPR с вкладками мониторинга, событий, поиска и настроек."""
+    """Главное окно приложения ANPR с вкладками наблюдения, поиска и настроек."""
 
     GRID_VARIANTS = ["1x1", "1x2", "2x2", "2x3", "3x3"]
 
@@ -206,26 +281,29 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.channel_workers: List[ChannelWorker] = []
         self.channel_labels: Dict[str, ChannelView] = {}
+        self.event_images: Dict[int, Tuple[Optional[QtGui.QImage], Optional[QtGui.QImage]]] = {}
+        self.event_cache: Dict[int, Dict] = {}
 
         self.tabs = QtWidgets.QTabWidget()
-        self.monitor_tab = self._build_monitor_tab()
-        self.events_tab = self._build_events_tab()
+        self.observation_tab = self._build_observation_tab()
         self.search_tab = self._build_search_tab()
         self.settings_tab = self._build_settings_tab()
 
-        self.tabs.addTab(self.monitor_tab, "Монитор")
-        self.tabs.addTab(self.events_tab, "События")
+        self.tabs.addTab(self.observation_tab, "Наблюдение")
         self.tabs.addTab(self.search_tab, "Поиск")
         self.tabs.addTab(self.settings_tab, "Настройки")
 
         self.setCentralWidget(self.tabs)
         self._refresh_events_table()
+        self._start_channels()
 
-    # ------------------ Мониторинг ------------------
-    def _build_monitor_tab(self) -> QtWidgets.QWidget:
+    # ------------------ Наблюдение ------------------
+    def _build_observation_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(widget)
+        layout = QtWidgets.QHBoxLayout(widget)
+        layout.setSpacing(10)
 
+        left_column = QtWidgets.QVBoxLayout()
         controls = QtWidgets.QHBoxLayout()
         controls.addWidget(QtWidgets.QLabel("Сетка:"))
         self.grid_selector = QtWidgets.QComboBox()
@@ -233,22 +311,43 @@ class MainWindow(QtWidgets.QMainWindow):
         self.grid_selector.setCurrentText(self.settings.get_grid())
         self.grid_selector.currentTextChanged.connect(self._on_grid_changed)
         controls.addWidget(self.grid_selector)
-
-        self.start_button = QtWidgets.QPushButton("Запустить")
-        self.start_button.clicked.connect(self._start_channels)
-        controls.addWidget(self.start_button)
-
         controls.addStretch()
-        controls.addWidget(QtWidgets.QLabel("Последнее событие:"))
-        self.last_event_label = QtWidgets.QLabel("—")
-        controls.addWidget(self.last_event_label)
-
-        layout.addLayout(controls)
+        left_column.addLayout(controls)
 
         self.grid_widget = QtWidgets.QWidget()
         self.grid_layout = QtWidgets.QGridLayout(self.grid_widget)
         self.grid_layout.setSpacing(6)
-        layout.addWidget(self.grid_widget)
+        left_column.addWidget(self.grid_widget, stretch=4)
+
+        last_event_group = QtWidgets.QGroupBox("Последнее событие")
+        last_event_layout = QtWidgets.QHBoxLayout(last_event_group)
+        self.last_event_label = QtWidgets.QLabel("—")
+        last_event_layout.addWidget(self.last_event_label)
+        left_column.addWidget(last_event_group, stretch=1)
+
+        layout.addLayout(left_column, stretch=3)
+
+        right_column = QtWidgets.QVBoxLayout()
+        details_group = QtWidgets.QGroupBox("Информация о событии")
+        details_layout = QtWidgets.QVBoxLayout(details_group)
+        self.event_detail = EventDetailView()
+        details_layout.addWidget(self.event_detail)
+        right_column.addWidget(details_group, stretch=2)
+
+        events_group = QtWidgets.QGroupBox("События")
+        events_layout = QtWidgets.QVBoxLayout(events_group)
+        self.events_table = QtWidgets.QTableWidget(0, 5)
+        self.events_table.setHorizontalHeaderLabels(
+            ["Время", "Канал", "Номер", "Уверенность", "Источник"]
+        )
+        self.events_table.horizontalHeader().setStretchLastSection(True)
+        self.events_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.events_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.events_table.itemSelectionChanged.connect(self._on_event_selected)
+        events_layout.addWidget(self.events_table)
+        right_column.addWidget(events_group, stretch=3)
+
+        layout.addLayout(right_column, stretch=2)
 
         self._draw_grid()
         return widget
@@ -295,8 +394,16 @@ class MainWindow(QtWidgets.QMainWindow):
     def _start_channels(self) -> None:
         self._stop_workers()
         self.channel_workers = []
+        reconnect_conf = self.settings.get_reconnect()
         for channel_conf in self.settings.get_channels():
-            worker = ChannelWorker(channel_conf, self.settings.get_db_path())
+            source = str(channel_conf.get("source", "")).strip()
+            channel_name = channel_conf.get("name", "Канал")
+            if not source:
+                label = self.channel_labels.get(channel_name)
+                if label:
+                    label.set_status("Нет источника")
+                continue
+            worker = ChannelWorker(channel_conf, self.settings.get_db_path(), reconnect_conf)
             worker.frame_ready.connect(self._update_frame)
             worker.event_ready.connect(self._handle_event)
             worker.status_ready.connect(self._handle_status)
@@ -320,10 +427,17 @@ class MainWindow(QtWidgets.QMainWindow):
         label.set_pixmap(pixmap)
 
     def _handle_event(self, event: Dict) -> None:
+        event_id = int(event.get("id", 0))
+        frame_image = event.get("frame_image")
+        plate_image = event.get("plate_image")
+        if event_id:
+            self.event_images[event_id] = (frame_image, plate_image)
+            self.event_cache[event_id] = event
         self.last_event_label.setText(
             f"{event['timestamp']} | {event['channel']} | {event['plate']} | {event['confidence']:.2f}"
         )
-        self._refresh_events_table()
+        self._refresh_events_table(select_id=event_id)
+        self._show_event_details(event_id)
 
     def _handle_status(self, channel: str, status: str) -> None:
         label = self.channel_labels.get(channel)
@@ -335,67 +449,43 @@ class MainWindow(QtWidgets.QMainWindow):
                 label.set_status(status)
             label.set_motion_active("обнаружено" in normalized)
 
-    # ------------------ События ------------------
-    def _build_events_tab(self) -> QtWidgets.QWidget:
-        widget = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(widget)
+    def _on_event_selected(self) -> None:
+        selected = self.events_table.selectedItems()
+        if not selected:
+            return
+        event_id_item = selected[0]
+        event_id = int(event_id_item.data(QtCore.Qt.UserRole) or 0)
+        self._show_event_details(event_id)
 
-        filters = QtWidgets.QHBoxLayout()
-        filters.addWidget(QtWidgets.QLabel("Дата с:"))
-        self.events_from = QtWidgets.QDateTimeEdit()
-        self._prepare_optional_datetime(self.events_from)
-        filters.addWidget(self.events_from)
+    def _show_event_details(self, event_id: int) -> None:
+        event = self.event_cache.get(event_id)
+        images = self.event_images.get(event_id, (None, None))
+        frame_image, plate_image = images
+        self.event_detail.set_event(event, frame_image, plate_image)
 
-        filters.addWidget(QtWidgets.QLabel("по:"))
-        self.events_to = QtWidgets.QDateTimeEdit()
-        self._prepare_optional_datetime(self.events_to)
-        filters.addWidget(self.events_to)
-
-        filters.addWidget(QtWidgets.QLabel("Канал:"))
-        self.events_channel = QtWidgets.QComboBox()
-        self.events_channel.addItem("Все", "")
-        for channel in self.settings.get_channels():
-            self.events_channel.addItem(channel.get("name", ""), channel.get("name", ""))
-        filters.addWidget(self.events_channel)
-
-        filters.addWidget(QtWidgets.QLabel("Список номеров (через запятую):"))
-        self.events_plate_list = QtWidgets.QLineEdit()
-        filters.addWidget(self.events_plate_list)
-
-        apply_btn = QtWidgets.QPushButton("Применить")
-        apply_btn.clicked.connect(self._refresh_events_table)
-        filters.addWidget(apply_btn)
-
-        layout.addLayout(filters)
-
-        self.events_table = QtWidgets.QTableWidget(0, 5)
-        self.events_table.setHorizontalHeaderLabels(
-            ["Время", "Канал", "Номер", "Уверенность", "Источник"]
-        )
-        self.events_table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.events_table)
-
-        return widget
-
-    def _refresh_events_table(self) -> None:
-        start = self._get_datetime_value(self.events_from)
-        end = self._get_datetime_value(self.events_to)
-        channel = self.events_channel.currentData() if hasattr(self, "events_channel") else None
-        plates_input = self.events_plate_list.text() if hasattr(self, "events_plate_list") else ""
-        plates = [plate.strip() for plate in plates_input.split(",") if plate.strip()]
-
-        rows = self.db.fetch_filtered(start=start or None, end=end or None, channel=channel or None, plates=plates)
+    def _refresh_events_table(self, select_id: Optional[int] = None) -> None:
+        rows = self.db.fetch_recent(limit=200)
         self.events_table.setRowCount(0)
+        self.event_cache = {row["id"]: dict(row) for row in rows}
         for row_data in rows:
             row_index = self.events_table.rowCount()
             self.events_table.insertRow(row_index)
-            self.events_table.setItem(row_index, 0, QtWidgets.QTableWidgetItem(row_data["timestamp"]))
+            id_item = QtWidgets.QTableWidgetItem(row_data["timestamp"])
+            id_item.setData(QtCore.Qt.UserRole, int(row_data["id"]))
+            self.events_table.setItem(row_index, 0, id_item)
             self.events_table.setItem(row_index, 1, QtWidgets.QTableWidgetItem(row_data["channel"]))
             self.events_table.setItem(row_index, 2, QtWidgets.QTableWidgetItem(row_data["plate"]))
             self.events_table.setItem(
                 row_index, 3, QtWidgets.QTableWidgetItem(f"{row_data['confidence'] or 0:.2f}")
             )
             self.events_table.setItem(row_index, 4, QtWidgets.QTableWidgetItem(row_data["source"]))
+
+        if select_id:
+            for row in range(self.events_table.rowCount()):
+                item = self.events_table.item(row, 0)
+                if item and int(item.data(QtCore.Qt.UserRole) or 0) == select_id:
+                    self.events_table.selectRow(row)
+                    break
 
     # ------------------ Поиск ------------------
     def _build_search_tab(self) -> QtWidgets.QWidget:
@@ -447,6 +537,54 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------ Настройки ------------------
     def _build_settings_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(widget)
+        tabs = QtWidgets.QTabWidget()
+        tabs.addTab(self._build_general_settings_tab(), "Общие")
+        tabs.addTab(self._build_channel_settings_tab(), "Каналы")
+        layout.addWidget(tabs)
+        return widget
+
+    def _build_general_settings_tab(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(widget)
+
+        general_group = QtWidgets.QGroupBox("Автоматическое переподключение")
+        general_form = QtWidgets.QFormLayout(general_group)
+        self.reconnect_on_loss_checkbox = QtWidgets.QCheckBox("Переподключение при потере сигнала")
+        general_form.addRow(self.reconnect_on_loss_checkbox)
+
+        self.frame_timeout_input = QtWidgets.QSpinBox()
+        self.frame_timeout_input.setRange(1, 300)
+        self.frame_timeout_input.setSuffix(" с")
+        self.frame_timeout_input.setToolTip("Сколько секунд ждать кадр перед попыткой переподключения")
+        general_form.addRow("Таймаут ожидания кадра:", self.frame_timeout_input)
+
+        self.retry_interval_input = QtWidgets.QSpinBox()
+        self.retry_interval_input.setRange(1, 300)
+        self.retry_interval_input.setSuffix(" с")
+        self.retry_interval_input.setToolTip("Интервал между попытками переподключения при потере сигнала")
+        general_form.addRow("Интервал между попытками:", self.retry_interval_input)
+
+        self.periodic_reconnect_checkbox = QtWidgets.QCheckBox("Переподключение по таймеру")
+        general_form.addRow(self.periodic_reconnect_checkbox)
+
+        self.periodic_interval_input = QtWidgets.QSpinBox()
+        self.periodic_interval_input.setRange(1, 1440)
+        self.periodic_interval_input.setSuffix(" мин")
+        self.periodic_interval_input.setToolTip("Плановое переподключение каждые N минут")
+        general_form.addRow("Интервал переподключения:", self.periodic_interval_input)
+
+        save_general_btn = QtWidgets.QPushButton("Сохранить общие настройки")
+        save_general_btn.clicked.connect(self._save_general_settings)
+        general_form.addRow(save_general_btn)
+        layout.addWidget(general_group)
+        layout.addStretch()
+
+        self._load_general_settings()
+        return widget
+
+    def _build_channel_settings_tab(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget()
         layout = QtWidgets.QHBoxLayout(widget)
 
         left_panel = QtWidgets.QVBoxLayout()
@@ -471,23 +609,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.preview.roi_changed.connect(self._on_roi_drawn)
         form_container.addWidget(self.preview)
 
-        form_layout = QtWidgets.QFormLayout()
+        channel_group = QtWidgets.QGroupBox("Канал")
+        channel_form = QtWidgets.QFormLayout(channel_group)
         self.channel_name_input = QtWidgets.QLineEdit()
         self.channel_source_input = QtWidgets.QLineEdit()
-        form_layout.addRow("Название:", self.channel_name_input)
-        form_layout.addRow("Источник/RTSP:", self.channel_source_input)
+        channel_form.addRow("Название:", self.channel_name_input)
+        channel_form.addRow("Источник/RTSP:", self.channel_source_input)
+        form_container.addWidget(channel_group)
 
+        recognition_group = QtWidgets.QGroupBox("Распознавание")
+        recognition_form = QtWidgets.QFormLayout(recognition_group)
         self.best_shots_input = QtWidgets.QSpinBox()
         self.best_shots_input.setRange(1, 50)
         self.best_shots_input.setToolTip("Количество бестшотов, участвующих в консенсусе трека")
-        form_layout.addRow("Бестшоты на трек:", self.best_shots_input)
+        recognition_form.addRow("Бестшоты на трек:", self.best_shots_input)
 
         self.cooldown_input = QtWidgets.QSpinBox()
         self.cooldown_input.setRange(0, 3600)
         self.cooldown_input.setToolTip(
             "Интервал (в секундах), в течение которого не создается повторное событие для того же номера"
         )
-        form_layout.addRow("Пауза повтора (сек):", self.cooldown_input)
+        recognition_form.addRow("Пауза повтора (сек):", self.cooldown_input)
 
         self.min_conf_input = QtWidgets.QDoubleSpinBox()
         self.min_conf_input.setRange(0.0, 1.0)
@@ -496,13 +638,47 @@ class MainWindow(QtWidgets.QMainWindow):
         self.min_conf_input.setToolTip(
             "Минимальная уверенность OCR (0-1) для приема результата; ниже — помечается как нечитаемое"
         )
-        form_layout.addRow("Мин. уверенность OCR:", self.min_conf_input)
+        recognition_form.addRow("Мин. уверенность OCR:", self.min_conf_input)
+        form_container.addWidget(recognition_group)
 
+        motion_group = QtWidgets.QGroupBox("Детектор движения")
+        motion_form = QtWidgets.QFormLayout(motion_group)
         self.detection_mode_input = QtWidgets.QComboBox()
         self.detection_mode_input.addItem("Постоянное", "continuous")
         self.detection_mode_input.addItem("Детектор движения", "motion")
-        form_layout.addRow("Обнаружение ТС:", self.detection_mode_input)
+        motion_form.addRow("Обнаружение ТС:", self.detection_mode_input)
 
+        self.detector_stride_input = QtWidgets.QSpinBox()
+        self.detector_stride_input.setRange(1, 12)
+        self.detector_stride_input.setToolTip(
+            "Запускать YOLO на каждом N-м кадре в зоне распознавания, чтобы снизить нагрузку"
+        )
+        motion_form.addRow("Шаг инференса (кадр):", self.detector_stride_input)
+
+        self.motion_threshold_input = QtWidgets.QDoubleSpinBox()
+        self.motion_threshold_input.setRange(0.0, 1.0)
+        self.motion_threshold_input.setDecimals(3)
+        self.motion_threshold_input.setSingleStep(0.005)
+        self.motion_threshold_input.setToolTip("Порог чувствительности по площади изменения внутри ROI")
+        motion_form.addRow("Порог движения:", self.motion_threshold_input)
+
+        self.motion_stride_input = QtWidgets.QSpinBox()
+        self.motion_stride_input.setRange(1, 30)
+        self.motion_stride_input.setToolTip("Обрабатывать каждый N-й кадр для поиска движения")
+        motion_form.addRow("Частота анализа (кадр):", self.motion_stride_input)
+
+        self.motion_activation_frames_input = QtWidgets.QSpinBox()
+        self.motion_activation_frames_input.setRange(1, 60)
+        self.motion_activation_frames_input.setToolTip("Сколько кадров подряд должно быть движение, чтобы включить распознавание")
+        motion_form.addRow("Мин. кадров с движением:", self.motion_activation_frames_input)
+
+        self.motion_release_frames_input = QtWidgets.QSpinBox()
+        self.motion_release_frames_input.setRange(1, 120)
+        self.motion_release_frames_input.setToolTip("Сколько кадров без движения нужно, чтобы остановить распознавание")
+        motion_form.addRow("Мин. кадров без движения:", self.motion_release_frames_input)
+        form_container.addWidget(motion_group)
+
+        roi_group = QtWidgets.QGroupBox("Зона распознавания")
         roi_layout = QtWidgets.QGridLayout()
         self.roi_x_input = QtWidgets.QSpinBox()
         self.roi_x_input.setRange(0, 100)
@@ -524,17 +700,17 @@ class MainWindow(QtWidgets.QMainWindow):
         roi_layout.addWidget(self.roi_w_input, 2, 1)
         roi_layout.addWidget(QtWidgets.QLabel("Высота (%):"), 3, 0)
         roi_layout.addWidget(self.roi_h_input, 3, 1)
-        form_layout.addRow("Область распознавания:", roi_layout)
-
         refresh_btn = QtWidgets.QPushButton("Обновить кадр")
         refresh_btn.clicked.connect(self._refresh_preview_frame)
-        form_layout.addRow(refresh_btn)
+        roi_layout.addWidget(refresh_btn, 4, 0, 1, 2)
+        roi_group.setLayout(roi_layout)
+        form_container.addWidget(roi_group)
 
-        save_btn = QtWidgets.QPushButton("Сохранить")
+        save_btn = QtWidgets.QPushButton("Сохранить канал")
         save_btn.clicked.connect(self._save_channel)
-        form_layout.addRow(save_btn)
+        form_container.addWidget(save_btn)
+        form_container.addStretch()
 
-        form_container.addLayout(form_layout)
         layout.addLayout(form_container)
 
         self._reload_channels_list()
@@ -547,21 +723,52 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.channels_list.count():
             self.channels_list.setCurrentRow(0)
 
+    def _load_general_settings(self) -> None:
+        reconnect = self.settings.get_reconnect()
+        signal_loss = reconnect.get("signal_loss", {})
+        periodic = reconnect.get("periodic", {})
+
+        self.reconnect_on_loss_checkbox.setChecked(bool(signal_loss.get("enabled", True)))
+        self.frame_timeout_input.setValue(int(signal_loss.get("frame_timeout_seconds", 5)))
+        self.retry_interval_input.setValue(int(signal_loss.get("retry_interval_seconds", 5)))
+
+        self.periodic_reconnect_checkbox.setChecked(bool(periodic.get("enabled", False)))
+        self.periodic_interval_input.setValue(int(periodic.get("interval_minutes", 60)))
+
+    def _save_general_settings(self) -> None:
+        reconnect = {
+            "signal_loss": {
+                "enabled": self.reconnect_on_loss_checkbox.isChecked(),
+                "frame_timeout_seconds": int(self.frame_timeout_input.value()),
+                "retry_interval_seconds": int(self.retry_interval_input.value()),
+            },
+            "periodic": {
+                "enabled": self.periodic_reconnect_checkbox.isChecked(),
+                "interval_minutes": int(self.periodic_interval_input.value()),
+            },
+        }
+        self.settings.save_reconnect(reconnect)
+        self._start_channels()
+
     def _load_channel_form(self, index: int) -> None:
         channels = self.settings.get_channels()
         if 0 <= index < len(channels):
             channel = channels[index]
             self.channel_name_input.setText(channel.get("name", ""))
             self.channel_source_input.setText(channel.get("source", ""))
-            self.best_shots_input.setValue(int(channel.get("best_shots", 3)))
-            self.cooldown_input.setValue(int(channel.get("cooldown_seconds", 5)))
-            self.min_conf_input.setValue(float(channel.get("ocr_min_confidence", 0.6)))
+            self.best_shots_input.setValue(int(channel.get("best_shots", self.settings.get_best_shots())))
+            self.cooldown_input.setValue(int(channel.get("cooldown_seconds", self.settings.get_cooldown_seconds())))
+            self.min_conf_input.setValue(float(channel.get("ocr_min_confidence", self.settings.get_min_confidence())))
+            self.detection_mode_input.setCurrentIndex(
+                max(0, self.detection_mode_input.findData(channel.get("detection_mode", "continuous")))
+            )
+            self.detector_stride_input.setValue(int(channel.get("detector_frame_stride", 2)))
+            self.motion_threshold_input.setValue(float(channel.get("motion_threshold", 0.01)))
+            self.motion_stride_input.setValue(int(channel.get("motion_frame_stride", 1)))
+            self.motion_activation_frames_input.setValue(int(channel.get("motion_activation_frames", 3)))
+            self.motion_release_frames_input.setValue(int(channel.get("motion_release_frames", 6)))
 
-            mode = channel.get("detection_mode", "continuous")
-            mode_index = max(0, self.detection_mode_input.findData(mode))
-            self.detection_mode_input.setCurrentIndex(mode_index)
-
-            region = channel.get("region", {})
+            region = channel.get("region") or {"x": 0, "y": 0, "width": 100, "height": 100}
             self.roi_x_input.setValue(int(region.get("x", 0)))
             self.roi_y_input.setValue(int(region.get("y", 0)))
             self.roi_w_input.setValue(int(region.get("width", 100)))
@@ -589,12 +796,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 "ocr_min_confidence": self.settings.get_min_confidence(),
                 "region": {"x": 0, "y": 0, "width": 100, "height": 100},
                 "detection_mode": "continuous",
+                "detector_frame_stride": 2,
                 "motion_threshold": 0.01,
+                "motion_frame_stride": 1,
+                "motion_activation_frames": 3,
+                "motion_release_frames": 6,
             }
         )
         self.settings.save_channels(channels)
         self._reload_channels_list()
         self._draw_grid()
+        self._start_channels()
 
     def _remove_channel(self) -> None:
         index = self.channels_list.currentRow()
@@ -604,6 +816,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.save_channels(channels)
             self._reload_channels_list()
             self._draw_grid()
+            self._start_channels()
 
     def _save_channel(self) -> None:
         index = self.channels_list.currentRow()
@@ -615,6 +828,11 @@ class MainWindow(QtWidgets.QMainWindow):
             channels[index]["cooldown_seconds"] = int(self.cooldown_input.value())
             channels[index]["ocr_min_confidence"] = float(self.min_conf_input.value())
             channels[index]["detection_mode"] = self.detection_mode_input.currentData()
+            channels[index]["detector_frame_stride"] = int(self.detector_stride_input.value())
+            channels[index]["motion_threshold"] = float(self.motion_threshold_input.value())
+            channels[index]["motion_frame_stride"] = int(self.motion_stride_input.value())
+            channels[index]["motion_activation_frames"] = int(self.motion_activation_frames_input.value())
+            channels[index]["motion_release_frames"] = int(self.motion_release_frames_input.value())
 
             region = {
                 "x": int(self.roi_x_input.value()),
@@ -622,13 +840,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 "width": int(self.roi_w_input.value()),
                 "height": int(self.roi_h_input.value()),
             }
-            # Корректируем область, чтобы она не выходила за пределы кадра.
             region["width"] = min(region["width"], max(1, 100 - region["x"]))
             region["height"] = min(region["height"], max(1, 100 - region["y"]))
             channels[index]["region"] = region
             self.settings.save_channels(channels)
             self._reload_channels_list()
             self._draw_grid()
+            self._start_channels()
 
     def _on_roi_drawn(self, roi: Dict[str, int]) -> None:
         self.roi_x_input.blockSignals(True)
