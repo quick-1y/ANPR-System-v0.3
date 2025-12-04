@@ -18,13 +18,16 @@ class SettingsManager:
                     "id": 1,
                     "name": "Канал 1",
                     "source": "0",
-                    "best_shots": 3,
-                    "cooldown_seconds": 5,
-                    "ocr_min_confidence": 0.6,
-                    "region": {"x": 0, "y": 0, "width": 100, "height": 100},
-                    "detection_mode": "continuous",
-                    "motion_threshold": 0.01,
-                },
+                "best_shots": 3,
+                "cooldown_seconds": 5,
+                "ocr_min_confidence": 0.6,
+                "region": {"x": 0, "y": 0, "width": 100, "height": 100},
+                "detection_mode": "continuous",
+                "motion_threshold": 0.01,
+                "motion_frame_stride": 1,
+                "motion_activation_frames": 3,
+                "motion_release_frames": 6,
+            },
             ],
             "storage": {"events_db": "data/events.db"},
             "tracking": {
@@ -70,6 +73,9 @@ class SettingsManager:
             "region": {"x": 0, "y": 0, "width": 100, "height": 100},
             "detection_mode": "continuous",
             "motion_threshold": 0.01,
+            "motion_frame_stride": 1,
+            "motion_activation_frames": 3,
+            "motion_release_frames": 6,
         }
 
     def _fill_channel_defaults(self, channel: Dict[str, Any], tracking_defaults: Dict[str, Any]) -> bool:

@@ -471,23 +471,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self.preview.roi_changed.connect(self._on_roi_drawn)
         form_container.addWidget(self.preview)
 
-        form_layout = QtWidgets.QFormLayout()
+        # Блок настроек канала
+        channel_group = QtWidgets.QGroupBox("Канал")
+        channel_form = QtWidgets.QFormLayout(channel_group)
         self.channel_name_input = QtWidgets.QLineEdit()
         self.channel_source_input = QtWidgets.QLineEdit()
-        form_layout.addRow("Название:", self.channel_name_input)
-        form_layout.addRow("Источник/RTSP:", self.channel_source_input)
+        channel_form.addRow("Название:", self.channel_name_input)
+        channel_form.addRow("Источник/RTSP:", self.channel_source_input)
+        form_container.addWidget(channel_group)
 
+        # Блок распознавания
+        recognition_group = QtWidgets.QGroupBox("Распознавание")
+        recognition_form = QtWidgets.QFormLayout(recognition_group)
         self.best_shots_input = QtWidgets.QSpinBox()
         self.best_shots_input.setRange(1, 50)
         self.best_shots_input.setToolTip("Количество бестшотов, участвующих в консенсусе трека")
-        form_layout.addRow("Бестшоты на трек:", self.best_shots_input)
+        recognition_form.addRow("Бестшоты на трек:", self.best_shots_input)
 
         self.cooldown_input = QtWidgets.QSpinBox()
         self.cooldown_input.setRange(0, 3600)
         self.cooldown_input.setToolTip(
             "Интервал (в секундах), в течение которого не создается повторное событие для того же номера"
         )
-        form_layout.addRow("Пауза повтора (сек):", self.cooldown_input)
+        recognition_form.addRow("Пауза повтора (сек):", self.cooldown_input)
 
         self.min_conf_input = QtWidgets.QDoubleSpinBox()
         self.min_conf_input.setRange(0.0, 1.0)
@@ -496,13 +502,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self.min_conf_input.setToolTip(
             "Минимальная уверенность OCR (0-1) для приема результата; ниже — помечается как нечитаемое"
         )
-        form_layout.addRow("Мин. уверенность OCR:", self.min_conf_input)
+        recognition_form.addRow("Мин. уверенность OCR:", self.min_conf_input)
+        form_container.addWidget(recognition_group)
 
+        # Блок детектора движения
+        motion_group = QtWidgets.QGroupBox("Детектор движения")
+        motion_form = QtWidgets.QFormLayout(motion_group)
         self.detection_mode_input = QtWidgets.QComboBox()
         self.detection_mode_input.addItem("Постоянное", "continuous")
         self.detection_mode_input.addItem("Детектор движения", "motion")
-        form_layout.addRow("Обнаружение ТС:", self.detection_mode_input)
+        motion_form.addRow("Обнаружение ТС:", self.detection_mode_input)
 
+        self.motion_threshold_input = QtWidgets.QDoubleSpinBox()
+        self.motion_threshold_input.setRange(0.0, 1.0)
+        self.motion_threshold_input.setDecimals(3)
+        self.motion_threshold_input.setSingleStep(0.005)
+        self.motion_threshold_input.setToolTip("Порог чувствительности по площади изменения внутри ROI")
+        motion_form.addRow("Порог движения:", self.motion_threshold_input)
+
+        self.motion_stride_input = QtWidgets.QSpinBox()
+        self.motion_stride_input.setRange(1, 30)
+        self.motion_stride_input.setToolTip("Обрабатывать каждый N-й кадр для поиска движения")
+        motion_form.addRow("Частота анализа (кадр):", self.motion_stride_input)
+
+        self.motion_activation_frames_input = QtWidgets.QSpinBox()
+        self.motion_activation_frames_input.setRange(1, 60)
+        self.motion_activation_frames_input.setToolTip("Сколько кадров подряд должно быть движение, чтобы включить распознавание")
+        motion_form.addRow("Мин. кадров с движением:", self.motion_activation_frames_input)
+
+        self.motion_release_frames_input = QtWidgets.QSpinBox()
+        self.motion_release_frames_input.setRange(1, 120)
+        self.motion_release_frames_input.setToolTip("Сколько кадров без движения нужно, чтобы остановить распознавание")
+        motion_form.addRow("Мин. кадров без движения:", self.motion_release_frames_input)
+        form_container.addWidget(motion_group)
+
+        # Блок зоны распознавания
+        roi_group = QtWidgets.QGroupBox("Зона распознавания")
         roi_layout = QtWidgets.QGridLayout()
         self.roi_x_input = QtWidgets.QSpinBox()
         self.roi_x_input.setRange(0, 100)
@@ -524,17 +559,17 @@ class MainWindow(QtWidgets.QMainWindow):
         roi_layout.addWidget(self.roi_w_input, 2, 1)
         roi_layout.addWidget(QtWidgets.QLabel("Высота (%):"), 3, 0)
         roi_layout.addWidget(self.roi_h_input, 3, 1)
-        form_layout.addRow("Область распознавания:", roi_layout)
-
         refresh_btn = QtWidgets.QPushButton("Обновить кадр")
         refresh_btn.clicked.connect(self._refresh_preview_frame)
-        form_layout.addRow(refresh_btn)
+        roi_layout.addWidget(refresh_btn, 4, 0, 1, 2)
+        roi_group.setLayout(roi_layout)
+        form_container.addWidget(roi_group)
 
         save_btn = QtWidgets.QPushButton("Сохранить")
         save_btn.clicked.connect(self._save_channel)
-        form_layout.addRow(save_btn)
+        form_container.addWidget(save_btn)
+        form_container.addStretch()
 
-        form_container.addLayout(form_layout)
         layout.addLayout(form_container)
 
         self._reload_channels_list()
@@ -556,6 +591,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.best_shots_input.setValue(int(channel.get("best_shots", 3)))
             self.cooldown_input.setValue(int(channel.get("cooldown_seconds", 5)))
             self.min_conf_input.setValue(float(channel.get("ocr_min_confidence", 0.6)))
+
+            self.motion_threshold_input.setValue(float(channel.get("motion_threshold", 0.01)))
+            self.motion_stride_input.setValue(int(channel.get("motion_frame_stride", 1)))
+            self.motion_activation_frames_input.setValue(int(channel.get("motion_activation_frames", 3)))
+            self.motion_release_frames_input.setValue(int(channel.get("motion_release_frames", 6)))
 
             mode = channel.get("detection_mode", "continuous")
             mode_index = max(0, self.detection_mode_input.findData(mode))
@@ -590,6 +630,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 "region": {"x": 0, "y": 0, "width": 100, "height": 100},
                 "detection_mode": "continuous",
                 "motion_threshold": 0.01,
+                "motion_frame_stride": 1,
+                "motion_activation_frames": 3,
+                "motion_release_frames": 6,
             }
         )
         self.settings.save_channels(channels)
@@ -615,6 +658,10 @@ class MainWindow(QtWidgets.QMainWindow):
             channels[index]["cooldown_seconds"] = int(self.cooldown_input.value())
             channels[index]["ocr_min_confidence"] = float(self.min_conf_input.value())
             channels[index]["detection_mode"] = self.detection_mode_input.currentData()
+            channels[index]["motion_threshold"] = float(self.motion_threshold_input.value())
+            channels[index]["motion_frame_stride"] = int(self.motion_stride_input.value())
+            channels[index]["motion_activation_frames"] = int(self.motion_activation_frames_input.value())
+            channels[index]["motion_release_frames"] = int(self.motion_release_frames_input.value())
 
             region = {
                 "x": int(self.roi_x_input.value()),

@@ -5,7 +5,8 @@ from typing import Dict, Optional, Tuple
 import cv2
 from PyQt5 import QtCore, QtGui
 
-from detector import ANPR_Pipeline, CRNNRecognizer, YOLODetector, Config as ModelConfig
+from anpr.detection.motion_detector import MotionDetector, MotionDetectorConfig
+from anpr.pipeline.factory import build_components
 from logging_manager import get_logger
 from storage import AsyncEventDatabase
 
@@ -29,7 +30,14 @@ class ChannelWorker(QtCore.QThread):
         self.min_confidence = float(channel_conf.get("ocr_min_confidence", 0.6))
         self.detection_mode = channel_conf.get("detection_mode", "continuous")
         self.motion_threshold = float(channel_conf.get("motion_threshold", 0.01))
-        self._prev_motion_frame: Optional[cv2.Mat] = None
+        self.motion_detector = MotionDetector(
+            MotionDetectorConfig(
+                threshold=self.motion_threshold,
+                frame_stride=int(channel_conf.get("motion_frame_stride", 1)),
+                activation_frames=int(channel_conf.get("motion_activation_frames", 3)),
+                release_frames=int(channel_conf.get("motion_release_frames", 6)),
+            )
+        )
 
     def _open_capture(self, source: str) -> Optional[cv2.VideoCapture]:
         capture = cv2.VideoCapture(int(source) if source.isnumeric() else source)
@@ -37,18 +45,8 @@ class ChannelWorker(QtCore.QThread):
             return None
         return capture
 
-    def _build_pipeline(self) -> Tuple[ANPR_Pipeline, YOLODetector]:
-        detector = YOLODetector(ModelConfig.YOLO_MODEL_PATH, ModelConfig.DEVICE)
-        recognizer = CRNNRecognizer(ModelConfig.OCR_MODEL_PATH, ModelConfig.DEVICE)
-        return (
-            ANPR_Pipeline(
-                recognizer,
-                self.best_shots,
-                self.cooldown_seconds,
-                min_confidence=self.min_confidence,
-            ),
-            detector,
-        )
+    def _build_pipeline(self) -> Tuple[object, object]:
+        return build_components(self.best_shots, self.cooldown_seconds, self.min_confidence)
 
     def _region_rect(self, frame_shape: Tuple[int, int, int]) -> Tuple[int, int, int, int]:
         height, width, _ = frame_shape
@@ -75,22 +73,7 @@ class ChannelWorker(QtCore.QThread):
         if self.detection_mode != "motion":
             return True
 
-        if roi_frame.size == 0:
-            return False
-
-        gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        if self._prev_motion_frame is None:
-            self._prev_motion_frame = gray
-            return False
-
-        frame_delta = cv2.absdiff(self._prev_motion_frame, gray)
-        self._prev_motion_frame = gray
-
-        _, thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)
-        motion_ratio = cv2.countNonZero(thresh) / float(gray.size)
-        return motion_ratio > self.motion_threshold
+        return self.motion_detector.update(roi_frame)
 
     @staticmethod
     def _offset_detections(detections: list[dict], roi_rect: Tuple[int, int, int, int]) -> list[dict]:
