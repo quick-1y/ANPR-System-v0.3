@@ -713,6 +713,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         layout.addLayout(form_container)
 
+        self._load_general_settings()
         self._reload_channels_list()
         return widget
 
