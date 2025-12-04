@@ -1,6 +1,7 @@
 import asyncio
+import time
 from datetime import datetime, timezone
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import cv2
 from PyQt5 import QtCore, QtGui
@@ -33,7 +34,7 @@ class ChannelWorker(QtCore.QThread):
     event_ready = QtCore.pyqtSignal(dict)
     status_ready = QtCore.pyqtSignal(str, str)
 
-    def __init__(self, channel_conf: Dict, db_path: str, parent=None) -> None:
+    def __init__(self, channel_conf: Dict, db_path: str, reconnect_conf: Optional[Dict[str, Any]] = None, parent=None) -> None:
         super().__init__(parent)
         self.channel_conf = channel_conf
         self.db_path = db_path
@@ -53,12 +54,40 @@ class ChannelWorker(QtCore.QThread):
             )
         )
         self._inference_limiter = InferenceLimiter(self.detector_frame_stride)
+        reconnect_conf = reconnect_conf or {}
+        signal_loss_conf = reconnect_conf.get("signal_loss", {})
+        periodic_conf = reconnect_conf.get("periodic", {})
+        self.reconnect_on_signal_loss = bool(signal_loss_conf.get("enabled", False))
+        self.frame_timeout_seconds = float(signal_loss_conf.get("frame_timeout_seconds", 5))
+        self.retry_interval_seconds = float(signal_loss_conf.get("retry_interval_seconds", 5))
+        self.periodic_reconnect_enabled = bool(periodic_conf.get("enabled", False))
+        self.periodic_reconnect_seconds = float(periodic_conf.get("interval_minutes", 0)) * 60
 
     def _open_capture(self, source: str) -> Optional[cv2.VideoCapture]:
         capture = cv2.VideoCapture(int(source) if source.isnumeric() else source)
         if not capture.isOpened():
             return None
         return capture
+
+    async def _open_with_retries(self, source: str, channel_name: str) -> Optional[cv2.VideoCapture]:
+        """Подключает источник с учетом настроек переподключения."""
+
+        while self._running:
+            capture = await asyncio.to_thread(self._open_capture, source)
+            if capture is not None:
+                self.status_ready.emit(channel_name, "")
+                return capture
+
+            if not self.reconnect_on_signal_loss:
+                self.status_ready.emit(channel_name, "Нет сигнала")
+                return None
+
+            self.status_ready.emit(
+                channel_name,
+                f"Нет сигнала, повтор через {int(self.retry_interval_seconds)}с",
+            )
+            await asyncio.sleep(max(0.1, self.retry_interval_seconds))
+        return None
 
     def _build_pipeline(self) -> Tuple[object, object]:
         return build_components(self.best_shots, self.cooldown_seconds, self.min_confidence)
@@ -143,21 +172,55 @@ class ChannelWorker(QtCore.QThread):
         storage = AsyncEventDatabase(self.db_path)
 
         source = str(self.channel_conf.get("source", "0"))
-        capture = await asyncio.to_thread(self._open_capture, source)
+        channel_name = self.channel_conf.get("name", "Канал")
+        capture = await self._open_with_retries(source, channel_name)
         if capture is None:
-            self.status_ready.emit(self.channel_conf.get("name", "Канал"), "Нет сигнала")
             logger.warning("Не удалось открыть источник %s для канала %s", source, self.channel_conf)
             return
-
-        channel_name = self.channel_conf.get("name", "Канал")
         logger.info("Канал %s запущен (источник=%s)", channel_name, source)
         waiting_for_motion = False
+        last_frame_ts = time.monotonic()
+        last_reconnect_ts = last_frame_ts
         while self._running:
+            now = time.monotonic()
+            if (
+                self.periodic_reconnect_enabled
+                and self.periodic_reconnect_seconds > 0
+                and now - last_reconnect_ts >= self.periodic_reconnect_seconds
+            ):
+                self.status_ready.emit(channel_name, "Плановое переподключение...")
+                capture.release()
+                capture = await self._open_with_retries(source, channel_name)
+                if capture is None:
+                    logger.warning("Переподключение не удалось для канала %s", channel_name)
+                    break
+                last_reconnect_ts = time.monotonic()
+                last_frame_ts = last_reconnect_ts
+                continue
+
             ret, frame = await asyncio.to_thread(capture.read)
-            if not ret:
-                self.status_ready.emit(channel_name, "Поток остановлен")
-                logger.warning("Поток остановлен для канала %s", channel_name)
-                break
+            if not ret or frame is None:
+                if not self.reconnect_on_signal_loss:
+                    self.status_ready.emit(channel_name, "Поток остановлен")
+                    logger.warning("Поток остановлен для канала %s", channel_name)
+                    break
+
+                if time.monotonic() - last_frame_ts < self.frame_timeout_seconds:
+                    await asyncio.sleep(0.05)
+                    continue
+
+                self.status_ready.emit(channel_name, "Потеря сигнала, переподключение...")
+                logger.warning("Потеря сигнала на канале %s, выполняем переподключение", channel_name)
+                capture.release()
+                capture = await self._open_with_retries(source, channel_name)
+                if capture is None:
+                    logger.warning("Переподключение не удалось для канала %s", channel_name)
+                    break
+                last_reconnect_ts = time.monotonic()
+                last_frame_ts = last_reconnect_ts
+                continue
+
+            last_frame_ts = time.monotonic()
 
             roi_frame, roi_rect = self._extract_region(frame)
             motion_detected = self._motion_detected(roi_frame)

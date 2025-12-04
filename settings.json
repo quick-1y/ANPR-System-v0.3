@@ -22,6 +22,17 @@
       "motion_release_frames": 6
     }
   ],
+  "reconnect": {
+    "signal_loss": {
+      "enabled": true,
+      "frame_timeout_seconds": 5,
+      "retry_interval_seconds": 5
+    },
+    "periodic": {
+      "enabled": false,
+      "interval_minutes": 60
+    }
+  },
   "storage": {
     "events_db": "data/events.db"
   },

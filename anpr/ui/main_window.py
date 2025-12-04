@@ -292,6 +292,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _start_channels(self) -> None:
         self._stop_workers()
         self.channel_workers = []
+        reconnect_conf = self.settings.get_reconnect()
         for channel_conf in self.settings.get_channels():
             source = str(channel_conf.get("source", "")).strip()
             channel_name = channel_conf.get("name", "Канал")
@@ -300,7 +301,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if label:
                     label.set_status("Нет источника")
                 continue
-            worker = ChannelWorker(channel_conf, self.settings.get_db_path())
+            worker = ChannelWorker(channel_conf, self.settings.get_db_path(), reconnect_conf)
             worker.frame_ready.connect(self._update_frame)
             worker.event_ready.connect(self._handle_event)
             worker.status_ready.connect(self._handle_status)
@@ -475,6 +476,38 @@ class MainWindow(QtWidgets.QMainWindow):
         self.preview.roi_changed.connect(self._on_roi_drawn)
         form_container.addWidget(self.preview)
 
+        # Общие настройки
+        general_group = QtWidgets.QGroupBox("Общие настройки")
+        general_form = QtWidgets.QFormLayout(general_group)
+        self.reconnect_on_loss_checkbox = QtWidgets.QCheckBox("Переподключение при потере сигнала")
+        general_form.addRow(self.reconnect_on_loss_checkbox)
+
+        self.frame_timeout_input = QtWidgets.QSpinBox()
+        self.frame_timeout_input.setRange(1, 300)
+        self.frame_timeout_input.setSuffix(" с")
+        self.frame_timeout_input.setToolTip("Сколько секунд ждать кадр перед попыткой переподключения")
+        general_form.addRow("Таймаут ожидания кадра:", self.frame_timeout_input)
+
+        self.retry_interval_input = QtWidgets.QSpinBox()
+        self.retry_interval_input.setRange(1, 300)
+        self.retry_interval_input.setSuffix(" с")
+        self.retry_interval_input.setToolTip("Интервал между попытками переподключения при потере сигнала")
+        general_form.addRow("Интервал между попытками:", self.retry_interval_input)
+
+        self.periodic_reconnect_checkbox = QtWidgets.QCheckBox("Переподключение по таймеру")
+        general_form.addRow(self.periodic_reconnect_checkbox)
+
+        self.periodic_interval_input = QtWidgets.QSpinBox()
+        self.periodic_interval_input.setRange(1, 1440)
+        self.periodic_interval_input.setSuffix(" мин")
+        self.periodic_interval_input.setToolTip("Плановое переподключение каждые N минут")
+        general_form.addRow("Интервал переподключения:", self.periodic_interval_input)
+
+        save_general_btn = QtWidgets.QPushButton("Сохранить общие настройки")
+        save_general_btn.clicked.connect(self._save_general_settings)
+        general_form.addRow(save_general_btn)
+        form_container.addWidget(general_group)
+
         # Блок настроек канала
         channel_group = QtWidgets.QGroupBox("Канал")
         channel_form = QtWidgets.QFormLayout(channel_group)
@@ -583,6 +616,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         layout.addLayout(form_container)
 
+        self._load_general_settings()
         self._reload_channels_list()
         return widget
 
@@ -592,6 +626,33 @@ class MainWindow(QtWidgets.QMainWindow):
             self.channels_list.addItem(channel.get("name", "Канал"))
         if self.channels_list.count():
             self.channels_list.setCurrentRow(0)
+
+    def _load_general_settings(self) -> None:
+        reconnect = self.settings.get_reconnect()
+        signal_loss = reconnect.get("signal_loss", {})
+        periodic = reconnect.get("periodic", {})
+
+        self.reconnect_on_loss_checkbox.setChecked(bool(signal_loss.get("enabled", True)))
+        self.frame_timeout_input.setValue(int(signal_loss.get("frame_timeout_seconds", 5)))
+        self.retry_interval_input.setValue(int(signal_loss.get("retry_interval_seconds", 5)))
+
+        self.periodic_reconnect_checkbox.setChecked(bool(periodic.get("enabled", False)))
+        self.periodic_interval_input.setValue(int(periodic.get("interval_minutes", 60)))
+
+    def _save_general_settings(self) -> None:
+        reconnect_conf = {
+            "signal_loss": {
+                "enabled": self.reconnect_on_loss_checkbox.isChecked(),
+                "frame_timeout_seconds": int(self.frame_timeout_input.value()),
+                "retry_interval_seconds": int(self.retry_interval_input.value()),
+            },
+            "periodic": {
+                "enabled": self.periodic_reconnect_checkbox.isChecked(),
+                "interval_minutes": int(self.periodic_interval_input.value()),
+            },
+        }
+        self.settings.save_reconnect(reconnect_conf)
+        self._start_channels()
 
     def _load_channel_form(self, index: int) -> None:
         channels = self.settings.get_channels()

@@ -30,6 +30,14 @@ class SettingsManager:
                     "motion_release_frames": 6,
                 },
             ],
+            "reconnect": {
+                "signal_loss": {
+                    "enabled": True,
+                    "frame_timeout_seconds": 5,
+                    "retry_interval_seconds": 5,
+                },
+                "periodic": {"enabled": False, "interval_minutes": 60},
+            },
             "storage": {"events_db": "data/events.db"},
             "tracking": {
                 "best_shots": 3,
@@ -57,9 +65,13 @@ class SettingsManager:
 
         changed = False
         tracking_defaults = data.get("tracking", {})
+        reconnect_defaults = self._reconnect_defaults()
         for channel in data.get("channels", []):
             if self._fill_channel_defaults(channel, tracking_defaults):
                 changed = True
+
+        if self._fill_reconnect_defaults(data, reconnect_defaults):
+            changed = True
 
         if changed:
             self._save(data)
@@ -80,6 +92,17 @@ class SettingsManager:
             "motion_release_frames": 6,
         }
 
+    @staticmethod
+    def _reconnect_defaults() -> Dict[str, Any]:
+        return {
+            "signal_loss": {
+                "enabled": True,
+                "frame_timeout_seconds": 5,
+                "retry_interval_seconds": 5,
+            },
+            "periodic": {"enabled": False, "interval_minutes": 60},
+        }
+
     def _fill_channel_defaults(self, channel: Dict[str, Any], tracking_defaults: Dict[str, Any]) -> bool:
         defaults = self._channel_defaults(tracking_defaults)
         changed = False
@@ -88,6 +111,25 @@ class SettingsManager:
                 # Сохраняем только отсутствующие ключи, не перезаписывая пользовательские значения.
                 channel[key] = value
                 changed = True
+        return changed
+
+    def _fill_reconnect_defaults(self, data: Dict[str, Any], defaults: Dict[str, Any]) -> bool:
+        if "reconnect" not in data:
+            data["reconnect"] = defaults
+            return True
+
+        changed = False
+        reconnect_section = data.get("reconnect", {})
+        for key, default_value in defaults.items():
+            if key not in reconnect_section:
+                reconnect_section[key] = default_value
+                changed = True
+            elif isinstance(default_value, dict):
+                for sub_key, sub_val in default_value.items():
+                    if sub_key not in reconnect_section[key]:
+                        reconnect_section[key][sub_key] = sub_val
+                        changed = True
+        data["reconnect"] = reconnect_section
         return changed
 
     def _save(self, data: Dict[str, Any]) -> None:
@@ -115,6 +157,15 @@ class SettingsManager:
 
     def save_grid(self, grid: str) -> None:
         self.settings["grid"] = grid
+        self._save(self.settings)
+
+    def get_reconnect(self) -> Dict[str, Any]:
+        if self._fill_reconnect_defaults(self.settings, self._reconnect_defaults()):
+            self._save(self.settings)
+        return self.settings.get("reconnect", {})
+
+    def save_reconnect(self, reconnect_conf: Dict[str, Any]) -> None:
+        self.settings["reconnect"] = reconnect_conf
         self._save(self.settings)
 
     def get_db_path(self) -> str:
