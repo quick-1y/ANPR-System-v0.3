@@ -315,15 +315,17 @@ class NavigationTabs(QtWidgets.QTabWidget):
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
+        self.setContentsMargins(0, 0, 0, 0)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
         tab_bar = self.tabBar()
-        desired_height = max(80, min(int(self.height() * 0.2), 160))
+        tab_bar.setExpanding(True)
+        tab_bar.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
+        )
+        desired_height = max(tab_bar.sizeHint().height(), 44)
         tab_bar.setFixedHeight(desired_height)
-        tab_bar.setMinimumWidth(self.width())
-        tab_bar.setMaximumWidth(self.width())
-        tab_bar.move(0, 0)
 
 
 class MainWindow(QtWidgets.QMainWindow):
