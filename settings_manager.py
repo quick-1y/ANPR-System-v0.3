@@ -235,6 +235,16 @@ class SettingsManager:
         storage = self.settings.get("storage", {})
         return storage.get("screenshots_dir", "data/screenshots")
 
+    def get_screenshot_dir(self) -> str:
+        storage = self.settings.get("storage", {})
+        return storage.get("screenshots_dir", "data/screenshots")
+
+    def save_screenshot_dir(self, path: str) -> None:
+        storage = self.settings.get("storage", {})
+        storage["screenshots_dir"] = path
+        self.settings["storage"] = storage
+        self._save(self.settings)
+
     def get_best_shots(self) -> int:
         tracking = self.settings.get("tracking", {})
         return int(tracking.get("best_shots", 3))
