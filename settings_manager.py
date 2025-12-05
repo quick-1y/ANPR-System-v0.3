@@ -38,7 +38,7 @@ class SettingsManager:
                 },
                 "periodic": {"enabled": False, "interval_minutes": 60},
             },
-            "storage": {"events_db": "data/events.db"},
+            "storage": {"events_db": "data/events.db", "screenshots_dir": "data/screenshots"},
             "tracking": {
                 "best_shots": 3,
                 "cooldown_seconds": 5,
@@ -66,11 +66,15 @@ class SettingsManager:
         changed = False
         tracking_defaults = data.get("tracking", {})
         reconnect_defaults = self._reconnect_defaults()
+        storage_defaults = self._storage_defaults()
         for channel in data.get("channels", []):
             if self._fill_channel_defaults(channel, tracking_defaults):
                 changed = True
 
         if self._fill_reconnect_defaults(data, reconnect_defaults):
+            changed = True
+
+        if self._fill_storage_defaults(data, storage_defaults):
             changed = True
 
         if changed:
@@ -103,6 +107,10 @@ class SettingsManager:
             "periodic": {"enabled": False, "interval_minutes": 60},
         }
 
+    @staticmethod
+    def _storage_defaults() -> Dict[str, Any]:
+        return {"events_db": "data/events.db", "screenshots_dir": "data/screenshots"}
+
     def _fill_channel_defaults(self, channel: Dict[str, Any], tracking_defaults: Dict[str, Any]) -> bool:
         defaults = self._channel_defaults(tracking_defaults)
         changed = False
@@ -130,6 +138,20 @@ class SettingsManager:
                         reconnect_section[key][sub_key] = sub_val
                         changed = True
         data["reconnect"] = reconnect_section
+        return changed
+
+    def _fill_storage_defaults(self, data: Dict[str, Any], defaults: Dict[str, Any]) -> bool:
+        if "storage" not in data:
+            data["storage"] = defaults
+            return True
+
+        changed = False
+        storage = data.get("storage", {})
+        for key, val in defaults.items():
+            if key not in storage:
+                storage[key] = val
+                changed = True
+        data["storage"] = storage
         return changed
 
     def _save(self, data: Dict[str, Any]) -> None:
@@ -171,6 +193,16 @@ class SettingsManager:
     def get_db_path(self) -> str:
         storage = self.settings.get("storage", {})
         return storage.get("events_db", "data/events.db")
+
+    def get_screenshot_dir(self) -> str:
+        storage = self.settings.get("storage", {})
+        return storage.get("screenshots_dir", "data/screenshots")
+
+    def save_screenshot_dir(self, path: str) -> None:
+        storage = self.settings.get("storage", {})
+        storage["screenshots_dir"] = path
+        self.settings["storage"] = storage
+        self._save(self.settings)
 
     def get_best_shots(self) -> int:
         tracking = self.settings.get("tracking", {})
