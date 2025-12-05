@@ -1,6 +1,4 @@
 import cv2
-import psutil
-import sqlite3
 from typing import Dict, List, Optional, Tuple
 
 from PyQt5 import QtCore, QtGui, QtWidgets
@@ -23,7 +21,7 @@ class ChannelView(QtWidgets.QWidget):
         self.video_label = QtWidgets.QLabel("Нет сигнала")
         self.video_label.setAlignment(QtCore.Qt.AlignCenter)
         self.video_label.setStyleSheet(
-            "background-color: #000; color: #e0e0e0; border: 1px solid #444; padding: 6px;"
+            "background-color: #1c1c1c; color: #ccc; border: 1px solid #444; padding: 4px;"
         )
         self.video_label.setMinimumSize(220, 170)
         self.video_label.setScaledContents(False)
@@ -52,15 +50,6 @@ class ChannelView(QtWidgets.QWidget):
         self.status_hint.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
         self.status_hint.hide()
 
-        self.plate_overlay = QtWidgets.QLabel("")
-        self.plate_overlay.setParent(self.video_label)
-        self.plate_overlay.setStyleSheet(
-            "background-color: rgba(0, 0, 0, 0.7); color: white; padding: 4px 8px;"
-            "font-weight: bold;"
-        )
-        self.plate_overlay.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
-        self.plate_overlay.hide()
-
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
         rect = self.video_label.contentsRect()
@@ -71,7 +60,6 @@ class ChannelView(QtWidgets.QWidget):
         )
         status_size = self.status_hint.sizeHint()
         self.status_hint.move(rect.left() + margin, rect.bottom() - status_size.height() - margin)
-        self.plate_overlay.move(rect.left() + margin, rect.top() + margin)
 
     def set_pixmap(self, pixmap: QtGui.QPixmap) -> None:
         self.video_label.setPixmap(pixmap)
@@ -84,12 +72,6 @@ class ChannelView(QtWidgets.QWidget):
         self.status_hint.setText(text)
         if text:
             self.status_hint.adjustSize()
-
-    def set_last_plate(self, text: str) -> None:
-        self.plate_overlay.setVisible(bool(text))
-        self.plate_overlay.setText(text)
-        if text:
-            self.plate_overlay.adjustSize()
 
 
 class ROIEditor(QtWidgets.QLabel):
@@ -215,42 +197,31 @@ class EventDetailView(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
         layout = QtWidgets.QVBoxLayout(self)
-        self.frame_preview = self._build_preview("Кадр распознавания", minimum_height=220)
-        layout.addWidget(self.frame_preview)
-
-        bottom = QtWidgets.QHBoxLayout()
-        bottom.setSpacing(12)
-        self.plate_preview = self._build_preview("Кадр номера", minimum_height=140)
-        bottom.addWidget(self.plate_preview, 1)
-
-        info_group = QtWidgets.QGroupBox("Данные распознавания")
-        info_group.setStyleSheet("QGroupBox { font-weight: bold; color: white; border: 1px solid #444; }")
-        info_layout = QtWidgets.QFormLayout(info_group)
-        info_layout.setLabelAlignment(QtCore.Qt.AlignLeft)
+        header = QtWidgets.QFormLayout()
         self.time_label = QtWidgets.QLabel("—")
         self.channel_label = QtWidgets.QLabel("—")
         self.plate_label = QtWidgets.QLabel("—")
         self.conf_label = QtWidgets.QLabel("—")
-        for label in (self.time_label, self.channel_label, self.plate_label, self.conf_label):
-            label.setStyleSheet("color: #d0d0d0;")
-        info_layout.addRow("Дата:", self.time_label)
-        info_layout.addRow("Канал:", self.channel_label)
-        info_layout.addRow("Гос. номер:", self.plate_label)
-        info_layout.addRow("Уверенность:", self.conf_label)
-        bottom.addWidget(info_group, 1)
+        header.addRow("Дата и время:", self.time_label)
+        header.addRow("Канал:", self.channel_label)
+        header.addRow("Гос. номер:", self.plate_label)
+        header.addRow("Уверенность:", self.conf_label)
+        layout.addLayout(header)
 
-        layout.addLayout(bottom)
+        previews = QtWidgets.QHBoxLayout()
+        self.frame_preview = self._build_preview("Кадр распознавания")
+        self.plate_preview = self._build_preview("Кадр номера")
+        previews.addWidget(self.frame_preview)
+        previews.addWidget(self.plate_preview)
+        layout.addLayout(previews)
 
-    def _build_preview(self, title: str, minimum_height: int = 160) -> QtWidgets.QGroupBox:
+    def _build_preview(self, title: str) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox(title)
-        group.setStyleSheet(
-            "QGroupBox { color: white; font-weight: bold; border: 1px solid #444; padding-top: 14px; margin-top: 6px;}"
-        )
         wrapper = QtWidgets.QVBoxLayout(group)
         label = QtWidgets.QLabel("Нет изображения")
         label.setAlignment(QtCore.Qt.AlignCenter)
-        label.setMinimumSize(200, minimum_height)
-        label.setStyleSheet("background-color: #0b0b0b; color: #888; border: 1px solid #444;")
+        label.setMinimumSize(200, 140)
+        label.setStyleSheet("background-color: #111; color: #888; border: 1px solid #444;")
         label.setScaledContents(True)
         wrapper.addWidget(label)
         group.display_label = label  # type: ignore[attr-defined]
@@ -314,43 +285,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.event_cache: Dict[int, Dict] = {}
 
         self.tabs = QtWidgets.QTabWidget()
-        self.tabs.setStyleSheet(
-            """
-            QTabWidget::pane { border: 1px solid #0f1115; background: rgb(23,25,29); }
-            QTabBar::tab { background: #4f4f4f; color: #b0b0b0; padding: 8px 16px; border-top-left-radius: 6px; border-top-right-radius: 6px; }
-            QTabBar::tab:selected { background: #00ffff; color: #000; }
-            QTabBar::tab:!selected { margin-top: 6px; }
-            QTabBar::tab:!selected:hover { background: #5c5c5c; }
-            """
-        )
         self.observation_tab = self._build_observation_tab()
-        self.log_tab = self._build_log_tab()
         self.search_tab = self._build_search_tab()
         self.settings_tab = self._build_settings_tab()
 
         self.tabs.addTab(self.observation_tab, "Наблюдение")
-        self.tabs.addTab(self.log_tab, "Журнал")
         self.tabs.addTab(self.search_tab, "Поиск")
         self.tabs.addTab(self.settings_tab, "Настройки")
 
         self.setCentralWidget(self.tabs)
         self._refresh_events_table()
-        self._refresh_log_table()
         self._start_channels()
-        self._init_status_bar()
 
     # ------------------ Наблюдение ------------------
     def _build_observation_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
-        widget.setStyleSheet("background-color: rgb(23,25,29); color: #d9d9d9;")
         layout = QtWidgets.QHBoxLayout(widget)
         layout.setSpacing(10)
 
         left_column = QtWidgets.QVBoxLayout()
         controls = QtWidgets.QHBoxLayout()
-        grid_label = QtWidgets.QLabel("Сетка:")
-        grid_label.setStyleSheet("color: #d9d9d9; font-weight: bold;")
-        controls.addWidget(grid_label)
+        controls.addWidget(QtWidgets.QLabel("Сетка:"))
         self.grid_selector = QtWidgets.QComboBox()
         self.grid_selector.addItems(self.GRID_VARIANTS)
         self.grid_selector.setCurrentText(self.settings.get_grid())
@@ -365,12 +320,8 @@ class MainWindow(QtWidgets.QMainWindow):
         left_column.addWidget(self.grid_widget, stretch=4)
 
         last_event_group = QtWidgets.QGroupBox("Последнее событие")
-        last_event_group.setStyleSheet(
-            "QGroupBox { color: white; font-weight: bold; border: 1px solid #444; margin-top: 6px; }"
-        )
         last_event_layout = QtWidgets.QHBoxLayout(last_event_group)
         self.last_event_label = QtWidgets.QLabel("—")
-        self.last_event_label.setStyleSheet("color: #e6e6e6; font-weight: bold;")
         last_event_layout.addWidget(self.last_event_label)
         left_column.addWidget(last_event_group, stretch=1)
 
@@ -378,26 +329,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
         right_column = QtWidgets.QVBoxLayout()
         details_group = QtWidgets.QGroupBox("Информация о событии")
-        details_group.setStyleSheet(
-            "QGroupBox { color: white; font-weight: bold; border: 1px solid #444; margin-top: 6px; }"
-        )
         details_layout = QtWidgets.QVBoxLayout(details_group)
         self.event_detail = EventDetailView()
         details_layout.addWidget(self.event_detail)
         right_column.addWidget(details_group, stretch=2)
 
         events_group = QtWidgets.QGroupBox("События")
-        events_group.setStyleSheet(
-            "QGroupBox { color: white; font-weight: bold; border: 1px solid #444; margin-top: 6px; }"
-        )
         events_layout = QtWidgets.QVBoxLayout(events_group)
-        self.events_table = QtWidgets.QTableWidget(0, 3)
-        self.events_table.setHorizontalHeaderLabels(["Время", "Канал", "Гос. номер"])
+        self.events_table = QtWidgets.QTableWidget(0, 5)
+        self.events_table.setHorizontalHeaderLabels(
+            ["Время", "Канал", "Номер", "Уверенность", "Источник"]
+        )
         self.events_table.horizontalHeader().setStretchLastSection(True)
         self.events_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.events_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.events_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self._style_events_table(self.events_table)
         self.events_table.itemSelectionChanged.connect(self._on_event_selected)
         events_layout.addWidget(self.events_table)
         right_column.addWidget(events_group, stretch=3)
@@ -406,17 +351,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._draw_grid()
         return widget
-
-    def _style_events_table(self, table: QtWidgets.QTableWidget) -> None:
-        table.setAlternatingRowColors(True)
-        table.setStyleSheet(
-            """
-            QTableWidget { background: rgb(40,40,40); alternate-background-color: #111; color: #cfcfcf; gridline-color: #333; }
-            QHeaderView::section { background-color: #17191d; color: white; padding: 6px 8px; border: 0; }
-            QTableWidget::item { background-color: #000; color: #cfcfcf; }
-            QTableWidget::item:selected { background-color: #00ffff; color: #000; }
-            """
-        )
 
     @staticmethod
     def _prepare_optional_datetime(widget: QtWidgets.QDateTimeEdit) -> None:
@@ -456,10 +390,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_grid_changed(self, grid: str) -> None:
         self.settings.save_grid(grid)
         self._draw_grid()
-
-    def _cache_events(self, rows: List[sqlite3.Row]) -> None:
-        for row in rows:
-            self.event_cache[int(row["id"])] = dict(row)
 
     def _start_channels(self) -> None:
         self._stop_workers()
@@ -503,14 +433,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if event_id:
             self.event_images[event_id] = (frame_image, plate_image)
             self.event_cache[event_id] = event
-        channel_label = self.channel_labels.get(event.get("channel", ""))
-        if channel_label:
-            channel_label.set_last_plate(event.get("plate", ""))
         self.last_event_label.setText(
             f"{event['timestamp']} | {event['channel']} | {event['plate']} | {event['confidence']:.2f}"
         )
         self._refresh_events_table(select_id=event_id)
-        self._refresh_log_table(select_id=event_id)
         self._show_event_details(event_id)
 
     def _handle_status(self, channel: str, status: str) -> None:
@@ -531,27 +457,16 @@ class MainWindow(QtWidgets.QMainWindow):
         event_id = int(event_id_item.data(QtCore.Qt.UserRole) or 0)
         self._show_event_details(event_id)
 
-    def _on_log_event_selected(self) -> None:
-        selected = self.log_table.selectedItems()
-        if not selected:
-            return
-        event_id_item = selected[0]
-        event_id = int(event_id_item.data(QtCore.Qt.UserRole) or 0)
-        self._show_event_details(event_id, target_view=self.log_event_detail)
-
-    def _show_event_details(
-        self, event_id: int, target_view: Optional[EventDetailView] = None
-    ) -> None:
+    def _show_event_details(self, event_id: int) -> None:
         event = self.event_cache.get(event_id)
         images = self.event_images.get(event_id, (None, None))
         frame_image, plate_image = images
-        view = target_view or self.event_detail
-        view.set_event(event, frame_image, plate_image)
+        self.event_detail.set_event(event, frame_image, plate_image)
 
     def _refresh_events_table(self, select_id: Optional[int] = None) -> None:
         rows = self.db.fetch_recent(limit=200)
         self.events_table.setRowCount(0)
-        self._cache_events(rows)
+        self.event_cache = {row["id"]: dict(row) for row in rows}
         for row_data in rows:
             row_index = self.events_table.rowCount()
             self.events_table.insertRow(row_index)
@@ -560,59 +475,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.events_table.setItem(row_index, 0, id_item)
             self.events_table.setItem(row_index, 1, QtWidgets.QTableWidgetItem(row_data["channel"]))
             self.events_table.setItem(row_index, 2, QtWidgets.QTableWidgetItem(row_data["plate"]))
+            self.events_table.setItem(
+                row_index, 3, QtWidgets.QTableWidgetItem(f"{row_data['confidence'] or 0:.2f}")
+            )
+            self.events_table.setItem(row_index, 4, QtWidgets.QTableWidgetItem(row_data["source"]))
 
         if select_id:
             for row in range(self.events_table.rowCount()):
                 item = self.events_table.item(row, 0)
                 if item and int(item.data(QtCore.Qt.UserRole) or 0) == select_id:
                     self.events_table.selectRow(row)
-                    break
-
-    def _build_log_tab(self) -> QtWidgets.QWidget:
-        widget = QtWidgets.QWidget()
-        widget.setStyleSheet("background-color: rgb(23,25,29); color: #d9d9d9;")
-        layout = QtWidgets.QVBoxLayout(widget)
-
-        self.log_table = QtWidgets.QTableWidget(0, 5)
-        self.log_table.setHorizontalHeaderLabels(
-            ["Время", "Канал", "Гос. номер", "Уверенность", "Источник"]
-        )
-        self.log_table.horizontalHeader().setStretchLastSection(True)
-        self.log_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.log_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.log_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self._style_events_table(self.log_table)
-        self.log_table.itemSelectionChanged.connect(self._on_log_event_selected)
-
-        layout.addWidget(self.log_table, 2)
-
-        self.log_event_detail = EventDetailView()
-        layout.addWidget(self.log_event_detail, 1)
-
-        return widget
-
-    def _refresh_log_table(self, select_id: Optional[int] = None) -> None:
-        rows = self.db.fetch_recent(limit=500)
-        self.log_table.setRowCount(0)
-        self._cache_events(rows)
-        for row_data in rows:
-            row_index = self.log_table.rowCount()
-            self.log_table.insertRow(row_index)
-            id_item = QtWidgets.QTableWidgetItem(row_data["timestamp"])
-            id_item.setData(QtCore.Qt.UserRole, int(row_data["id"]))
-            self.log_table.setItem(row_index, 0, id_item)
-            self.log_table.setItem(row_index, 1, QtWidgets.QTableWidgetItem(row_data["channel"]))
-            self.log_table.setItem(row_index, 2, QtWidgets.QTableWidgetItem(row_data["plate"]))
-            self.log_table.setItem(
-                row_index, 3, QtWidgets.QTableWidgetItem(f"{row_data['confidence'] or 0:.2f}")
-            )
-            self.log_table.setItem(row_index, 4, QtWidgets.QTableWidgetItem(row_data.get("source", "")))
-
-        if select_id:
-            for row in range(self.log_table.rowCount()):
-                item = self.log_table.item(row, 0)
-                if item and int(item.data(QtCore.Qt.UserRole) or 0) == select_id:
-                    self.log_table.selectRow(row)
                     break
 
     # ------------------ Поиск ------------------
@@ -1024,20 +896,6 @@ class MainWindow(QtWidgets.QMainWindow):
             rgb_frame.data, width, height, bytes_per_line, QtGui.QImage.Format_RGB888
         ).copy()
         self.preview.setPixmap(QtGui.QPixmap.fromImage(q_image))
-
-    def _init_status_bar(self) -> None:
-        status_bar = self.statusBar()
-        status_bar.setStyleSheet("background-color: #0f1115; color: #d0d0d0;")
-        self.status_label = QtWidgets.QLabel("CPU: — | RAM: —")
-        status_bar.addPermanentWidget(self.status_label)
-        self.status_timer = QtCore.QTimer(self)
-        self.status_timer.timeout.connect(self._update_status_bar)
-        self.status_timer.start(2000)
-
-    def _update_status_bar(self) -> None:
-        cpu = psutil.cpu_percent(interval=None)
-        mem = psutil.virtual_memory().percent
-        self.status_label.setText(f"CPU: {cpu:.0f}% | RAM: {mem:.0f}%")
 
     # ------------------ Жизненный цикл ------------------
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: N802
