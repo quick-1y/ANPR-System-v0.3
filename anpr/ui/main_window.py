@@ -397,6 +397,12 @@ class MainWindow(QtWidgets.QMainWindow):
             "QTableWidget::item { border-bottom: 1px solid #333; }"
             "QTableWidget::item:selected { background-color: #00ffff; color: #000; }"
         )
+        self.events_table.setStyleSheet(
+            "QHeaderView::section { background-color: rgb(23,25,29); color: white; padding: 6px; }"
+            "QTableWidget { background-color: #000; color: lightgray; gridline-color: #333; }"
+            "QTableWidget::item { border-bottom: 1px solid #333; }"
+            "QTableWidget::item:selected { background-color: #00ffff; color: #000; }"
+        )
         self.events_table.horizontalHeader().setStretchLastSection(True)
         self.events_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.events_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
