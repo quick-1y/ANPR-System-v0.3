@@ -1,5 +1,7 @@
 import asyncio
+import os
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
@@ -122,11 +124,20 @@ class ChannelWorker(QtCore.QThread):
     event_ready = QtCore.pyqtSignal(dict)
     status_ready = QtCore.pyqtSignal(str, str)
 
-    def __init__(self, channel_conf: Dict, db_path: str, reconnect_conf: Optional[Dict[str, Any]] = None, parent=None) -> None:
+    def __init__(
+        self,
+        channel_conf: Dict,
+        db_path: str,
+        screenshot_dir: str,
+        reconnect_conf: Optional[Dict[str, Any]] = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.config = ChannelRuntimeConfig.from_dict(channel_conf)
         self.reconnect_policy = ReconnectPolicy.from_dict(reconnect_conf)
         self.db_path = db_path
+        self.screenshot_dir = screenshot_dir
+        os.makedirs(self.screenshot_dir, exist_ok=True)
         self._running = True
 
         motion_config = MotionDetectorConfig(
@@ -203,6 +214,34 @@ class ChannelWorker(QtCore.QThread):
             rgb_frame.data, width, height, bytes_per_line, QtGui.QImage.Format_RGB888
         ).copy()
 
+    @staticmethod
+    def _sanitize_for_filename(value: str) -> str:
+        normalized = value.replace(os.sep, "_")
+        safe_chars = [c if c.isalnum() or c in ("-", "_") else "_" for c in normalized]
+        return "".join(safe_chars) or "event"
+
+    def _build_screenshot_paths(self, channel_name: str, plate: str) -> Tuple[str, str]:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        channel_safe = self._sanitize_for_filename(channel_name)
+        plate_safe = self._sanitize_for_filename(plate or "plate")
+        uid = uuid.uuid4().hex[:8]
+        base = f"{timestamp}_{channel_safe}_{plate_safe}_{uid}"
+        return (
+            os.path.join(self.screenshot_dir, f"{base}_frame.jpg"),
+            os.path.join(self.screenshot_dir, f"{base}_plate.jpg"),
+        )
+
+    def _save_bgr_image(self, path: str, image: Optional[cv2.Mat]) -> Optional[str]:
+        if image is None or image.size == 0:
+            return None
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            if cv2.imwrite(path, image):
+                return path
+        except Exception:  # noqa: BLE001
+            logger.exception("Не удалось сохранить скриншот по пути %s", path)
+        return None
+
     async def _process_events(
         self,
         storage: AsyncEventDatabase,
@@ -229,6 +268,9 @@ class ChannelWorker(QtCore.QThread):
                 }
                 x1, y1, x2, y2 = res.get("bbox", (0, 0, 0, 0))
                 plate_crop = frame[y1:y2, x1:x2] if frame is not None else None
+                frame_path, plate_path = self._build_screenshot_paths(channel_name, event["plate"])
+                event["frame_path"] = self._save_bgr_image(frame_path, frame)
+                event["plate_path"] = self._save_bgr_image(plate_path, plate_crop)
                 event["frame_image"] = self._to_qimage(frame)
                 event["plate_image"] = self._to_qimage(plate_crop) if plate_crop is not None else None
                 event["id"] = await storage.insert_event_async(
@@ -237,6 +279,8 @@ class ChannelWorker(QtCore.QThread):
                     confidence=event["confidence"],
                     source=event["source"],
                     timestamp=event["timestamp"],
+                    frame_path=event.get("frame_path"),
+                    plate_path=event.get("plate_path"),
                 )
                 self.event_ready.emit(event)
                 logger.info(
