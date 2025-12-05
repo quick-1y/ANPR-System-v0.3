@@ -315,6 +315,22 @@ class MainWindow(QtWidgets.QMainWindow):
     """Главное окно приложения ANPR с вкладками наблюдения, поиска и настроек."""
 
     GRID_VARIANTS = ["1x1", "1x2", "2x2", "2x3", "3x3"]
+    GROUP_BOX_STYLE = (
+        "QGroupBox { background-color: #2b2b28; color: #f0f0f0; border: 1px solid #383531; padding: 8px; margin-top: 6px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }"
+        "QLabel { color: #f0f0f0; }"
+        "QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateTimeEdit { background-color: #111; color: #f0f0f0; border: 1px solid #333; padding: 4px; }"
+        "QPushButton { background-color: #00ffff; color: #000; border-radius: 4px; padding: 6px 12px; font-weight: 600; }"
+        "QPushButton:hover { background-color: #4dfefe; }"
+        "QCheckBox { color: #e0e0e0; }"
+    )
+    TABLE_STYLE = (
+        "QHeaderView::section { background-color: rgb(23,25,29); color: white; padding: 6px; }"
+        "QTableWidget { background-color: #000; color: lightgray; gridline-color: #333; }"
+        "QTableWidget::item { border-bottom: 1px solid #333; }"
+        "QTableWidget::item:selected { background-color: #00ffff; color: #000; }"
+    )
+    LIST_STYLE = "QListWidget { background-color: #111; color: #e0e0e0; border: 1px solid #333; }"
 
     def __init__(self, settings: Optional[SettingsManager] = None) -> None:
         super().__init__()
@@ -399,12 +415,7 @@ class MainWindow(QtWidgets.QMainWindow):
         events_layout = QtWidgets.QVBoxLayout(events_group)
         self.events_table = QtWidgets.QTableWidget(0, 3)
         self.events_table.setHorizontalHeaderLabels(["Время", "Гос. номер", "Канал"])
-        self.events_table.setStyleSheet(
-            "QHeaderView::section { background-color: rgb(23,25,29); color: white; padding: 6px; }"
-            "QTableWidget { background-color: #000; color: lightgray; gridline-color: #333; }"
-            "QTableWidget::item { border-bottom: 1px solid #333; }"
-            "QTableWidget::item:selected { background-color: #00ffff; color: #000; }"
-        )
+        self.events_table.setStyleSheet(self.TABLE_STYLE)
         self.events_table.horizontalHeader().setStretchLastSection(True)
         self.events_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.events_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
@@ -577,8 +588,18 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_search_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
+        layout.setSpacing(12)
 
-        form = QtWidgets.QFormLayout()
+        widget.setStyleSheet(
+            "QLabel { color: #f0f0f0; }"
+            "QLineEdit, QDateTimeEdit { background-color: #111; color: #f0f0f0; border: 1px solid #333; padding: 4px; }"
+            "QPushButton { background-color: #00ffff; color: #000; border-radius: 4px; padding: 6px 12px; font-weight: 600; }"
+            "QPushButton:hover { background-color: #4dfefe; }"
+        )
+
+        filters_group = QtWidgets.QGroupBox("Фильтры поиска")
+        filters_group.setStyleSheet(self.GROUP_BOX_STYLE)
+        form = QtWidgets.QFormLayout(filters_group)
         self.search_plate = QtWidgets.QLineEdit()
         self.search_from = QtWidgets.QDateTimeEdit()
         self._prepare_optional_datetime(self.search_from)
@@ -588,17 +609,25 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow("Номер:", self.search_plate)
         form.addRow("Дата с:", self.search_from)
         form.addRow("Дата по:", self.search_to)
-        layout.addLayout(form)
+        layout.addWidget(filters_group)
 
+        button_row = QtWidgets.QHBoxLayout()
+        button_row.addStretch()
         search_btn = QtWidgets.QPushButton("Искать")
         search_btn.clicked.connect(self._run_plate_search)
-        layout.addWidget(search_btn)
+        button_row.addWidget(search_btn)
+        layout.addLayout(button_row)
 
         self.search_table = QtWidgets.QTableWidget(0, 5)
         self.search_table.setHorizontalHeaderLabels(
             ["Время", "Канал", "Номер", "Уверенность", "Источник"]
         )
         self.search_table.horizontalHeader().setStretchLastSection(True)
+        self.search_table.setStyleSheet(self.TABLE_STYLE)
+        self.search_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.search_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.search_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.search_table.verticalHeader().setVisible(False)
         layout.addWidget(self.search_table)
 
         return widget
@@ -633,8 +662,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_general_settings_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
+        widget.setStyleSheet(self.GROUP_BOX_STYLE)
 
         general_group = QtWidgets.QGroupBox("Автоматическое переподключение")
+        general_group.setStyleSheet(self.GROUP_BOX_STYLE)
         general_form = QtWidgets.QFormLayout(general_group)
         self.reconnect_on_loss_checkbox = QtWidgets.QCheckBox("Переподключение при потере сигнала")
         general_form.addRow(self.reconnect_on_loss_checkbox)
@@ -692,11 +723,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_channel_settings_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QHBoxLayout(widget)
+        widget.setStyleSheet(self.GROUP_BOX_STYLE)
 
         left_panel = QtWidgets.QVBoxLayout()
         left_panel.setSpacing(6)
         self.channels_list = QtWidgets.QListWidget()
         self.channels_list.setFixedWidth(180)
+        self.channels_list.setStyleSheet(self.LIST_STYLE)
         self.channels_list.currentRowChanged.connect(self._load_channel_form)
         left_panel.addWidget(self.channels_list)
 
@@ -719,6 +752,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_panel = QtWidgets.QVBoxLayout()
 
         channel_group = QtWidgets.QGroupBox("Канал")
+        channel_group.setStyleSheet(self.GROUP_BOX_STYLE)
         channel_form = QtWidgets.QFormLayout(channel_group)
         self.channel_name_input = QtWidgets.QLineEdit()
         self.channel_source_input = QtWidgets.QLineEdit()
@@ -727,6 +761,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_panel.addWidget(channel_group)
 
         recognition_group = QtWidgets.QGroupBox("Распознавание")
+        recognition_group.setStyleSheet(self.GROUP_BOX_STYLE)
         recognition_form = QtWidgets.QFormLayout(recognition_group)
         self.best_shots_input = QtWidgets.QSpinBox()
         self.best_shots_input.setRange(1, 50)
@@ -751,6 +786,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_panel.addWidget(recognition_group)
 
         motion_group = QtWidgets.QGroupBox("Детектор движения")
+        motion_group.setStyleSheet(self.GROUP_BOX_STYLE)
         motion_form = QtWidgets.QFormLayout(motion_group)
         self.detection_mode_input = QtWidgets.QComboBox()
         self.detection_mode_input.addItem("Постоянное", "continuous")
@@ -788,6 +824,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_panel.addWidget(motion_group)
 
         roi_group = QtWidgets.QGroupBox("Зона распознавания")
+        roi_group.setStyleSheet(self.GROUP_BOX_STYLE)
         roi_layout = QtWidgets.QGridLayout()
         self.roi_x_input = QtWidgets.QSpinBox()
         self.roi_x_input.setRange(0, 100)
