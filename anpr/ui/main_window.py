@@ -225,6 +225,10 @@ class EventDetailView(QtWidgets.QWidget):
         bottom_row.addWidget(self.plate_preview, 1)
 
         meta_group = QtWidgets.QGroupBox("Данные распознавания")
+        meta_group.setStyleSheet(
+            "QGroupBox { background-color: #000; color: white; border: 1px solid #2e2e2e; padding: 6px; }"
+            "QLabel { color: white; }"
+        )
         meta_layout = QtWidgets.QFormLayout(meta_group)
         self.time_label = QtWidgets.QLabel("—")
         self.channel_label = QtWidgets.QLabel("—")
@@ -322,6 +326,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.settings_tab, "Настройки")
 
         self.setCentralWidget(self.tabs)
+        self.setStyleSheet("background-color: #49423d;")
         self._build_status_bar()
         self._refresh_events_table()
         self._start_channels()
@@ -363,7 +368,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         last_event_layout = QtWidgets.QHBoxLayout(last_event_group)
         self.last_event_label = QtWidgets.QLabel("—")
-        self.last_event_label.setStyleSheet("color: white;")
+        self.last_event_label.setStyleSheet("color: white; font-size: 20px; font-weight: bold;")
         last_event_layout.addWidget(self.last_event_label)
         left_column.addWidget(last_event_group, stretch=1)
 
@@ -384,9 +389,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "QGroupBox { background-color: rgb(40,40,40); color: white; border: 1px solid #2e2e2e; padding: 6px; }"
         )
         events_layout = QtWidgets.QVBoxLayout(events_group)
-        self.events_table = QtWidgets.QTableWidget(0, 5)
-        self.events_table.setHorizontalHeaderLabels(
-            ["Время", "Канал", "Номер", "Уверенность", "Источник"]
+        self.events_table = QtWidgets.QTableWidget(0, 3)
+        self.events_table.setHorizontalHeaderLabels(["Время", "Гос. номер", "Канал"])
+        self.events_table.setStyleSheet(
+            "QHeaderView::section { background-color: rgb(23,25,29); color: white; padding: 6px; }"
+            "QTableWidget { background-color: #000; color: lightgray; gridline-color: #333; }"
+            "QTableWidget::item { border-bottom: 1px solid #333; }"
+            "QTableWidget::item:selected { background-color: #00ffff; color: #000; }"
         )
         self.events_table.setStyleSheet(
             "QHeaderView::section { background-color: rgb(23,25,29); color: white; padding: 6px; }"
@@ -397,6 +406,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.events_table.horizontalHeader().setStretchLastSection(True)
         self.events_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.events_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.events_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.events_table.verticalHeader().setVisible(False)
         self.events_table.itemSelectionChanged.connect(self._on_event_selected)
         events_layout.addWidget(self.events_table)
         right_column.addWidget(events_group, stretch=3)
@@ -504,9 +515,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if event_id:
             self.event_images[event_id] = (frame_image, plate_image)
             self.event_cache[event_id] = event
-        self.last_event_label.setText(
-            f"{event['timestamp']} | {event['channel']} | {event['plate']} | {event['confidence']:.2f}"
-        )
+        self.last_event_label.setText(str(event.get("plate", "")).upper() or "—")
         channel_label = self.channel_labels.get(event.get("channel", ""))
         if channel_label:
             channel_label.set_last_plate(event.get("plate", ""))
@@ -553,12 +562,8 @@ class MainWindow(QtWidgets.QMainWindow):
             id_item = QtWidgets.QTableWidgetItem(row_data["timestamp"])
             id_item.setData(QtCore.Qt.UserRole, int(row_data["id"]))
             self.events_table.setItem(row_index, 0, id_item)
-            self.events_table.setItem(row_index, 1, QtWidgets.QTableWidgetItem(row_data["channel"]))
-            self.events_table.setItem(row_index, 2, QtWidgets.QTableWidgetItem(row_data["plate"]))
-            self.events_table.setItem(
-                row_index, 3, QtWidgets.QTableWidgetItem(f"{row_data['confidence'] or 0:.2f}")
-            )
-            self.events_table.setItem(row_index, 4, QtWidgets.QTableWidgetItem(row_data["source"]))
+            self.events_table.setItem(row_index, 1, QtWidgets.QTableWidgetItem(row_data["plate"]))
+            self.events_table.setItem(row_index, 2, QtWidgets.QTableWidgetItem(row_data["channel"]))
 
         if select_id:
             for row in range(self.events_table.rowCount()):
