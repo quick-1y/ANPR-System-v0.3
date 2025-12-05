@@ -21,7 +21,7 @@ class ChannelView(QtWidgets.QWidget):
         self.video_label = QtWidgets.QLabel("Нет сигнала")
         self.video_label.setAlignment(QtCore.Qt.AlignCenter)
         self.video_label.setStyleSheet(
-            "background-color: #1c1c1c; color: #ccc; border: 1px solid #444; padding: 4px;"
+            "background-color: #000; color: #e5e5e5; border: 1px solid #30363d; padding: 4px;"
         )
         self.video_label.setMinimumSize(220, 170)
         self.video_label.setScaledContents(False)
@@ -50,6 +50,16 @@ class ChannelView(QtWidgets.QWidget):
         self.status_hint.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
         self.status_hint.hide()
 
+        self.plate_hint = QtWidgets.QLabel("—")
+        self.plate_hint.setParent(self.video_label)
+        self.plate_hint.setStyleSheet(
+            "background-color: rgba(0, 0, 0, 0.7); color: #ffffff;"
+            "padding: 4px 8px; border-radius: 8px; font-weight: 700;"
+            "border: 1px solid #00ffff;"
+        )
+        self.plate_hint.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        self.plate_hint.hide()
+
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
         rect = self.video_label.contentsRect()
@@ -60,6 +70,8 @@ class ChannelView(QtWidgets.QWidget):
         )
         status_size = self.status_hint.sizeHint()
         self.status_hint.move(rect.left() + margin, rect.bottom() - status_size.height() - margin)
+        plate_size = self.plate_hint.sizeHint()
+        self.plate_hint.move(rect.left() + margin, rect.top() + margin)
 
     def set_pixmap(self, pixmap: QtGui.QPixmap) -> None:
         self.video_label.setPixmap(pixmap)
@@ -72,6 +84,11 @@ class ChannelView(QtWidgets.QWidget):
         self.status_hint.setText(text)
         if text:
             self.status_hint.adjustSize()
+
+    def set_plate(self, plate: str) -> None:
+        self.plate_hint.setText(plate or "—")
+        self.plate_hint.adjustSize()
+        self.plate_hint.setVisible(bool(plate))
 
 
 class ROIEditor(QtWidgets.QLabel):
@@ -197,31 +214,55 @@ class EventDetailView(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
         layout = QtWidgets.QVBoxLayout(self)
-        header = QtWidgets.QFormLayout()
+        layout.setSpacing(12)
+
+        self.frame_preview = self._build_preview("Кадр распознавания", QtCore.QSize(360, 240))
+        layout.addWidget(self.frame_preview)
+
+        bottom = QtWidgets.QHBoxLayout()
+        bottom.setSpacing(12)
+        self.plate_preview = self._build_preview("Кадр номера", QtCore.QSize(220, 160))
+        bottom.addWidget(self.plate_preview, 1)
+
+        info_card = QtWidgets.QGroupBox("Информация о распознавании")
+        info_card.setStyleSheet(
+            "QGroupBox { background-color: #101418; border: 1px solid #2c313a; border-radius: 8px;"
+            " padding: 8px; color: #e8f0ff; font-weight: 600; }"
+            "QGroupBox::title { color: #00ffff; left: 8px; }"
+            "QLabel { color: #cbd5e1; font-weight: 500; }"
+        )
+        info_layout = QtWidgets.QFormLayout(info_card)
+        info_layout.setHorizontalSpacing(12)
+        info_layout.setVerticalSpacing(6)
         self.time_label = QtWidgets.QLabel("—")
         self.channel_label = QtWidgets.QLabel("—")
         self.plate_label = QtWidgets.QLabel("—")
         self.conf_label = QtWidgets.QLabel("—")
-        header.addRow("Дата и время:", self.time_label)
-        header.addRow("Канал:", self.channel_label)
-        header.addRow("Гос. номер:", self.plate_label)
-        header.addRow("Уверенность:", self.conf_label)
-        layout.addLayout(header)
+        for widget in (self.time_label, self.channel_label, self.plate_label, self.conf_label):
+            widget.setStyleSheet("color: #e2e8f0; font-weight: 600;")
+        info_layout.addRow("Дата и время:", self.time_label)
+        info_layout.addRow("Канал:", self.channel_label)
+        info_layout.addRow("Гос. номер:", self.plate_label)
+        info_layout.addRow("Уверенность:", self.conf_label)
+        bottom.addWidget(info_card, 1)
 
-        previews = QtWidgets.QHBoxLayout()
-        self.frame_preview = self._build_preview("Кадр распознавания")
-        self.plate_preview = self._build_preview("Кадр номера")
-        previews.addWidget(self.frame_preview)
-        previews.addWidget(self.plate_preview)
-        layout.addLayout(previews)
+        layout.addLayout(bottom)
 
-    def _build_preview(self, title: str) -> QtWidgets.QGroupBox:
+    def _build_preview(self, title: str, minimum: QtCore.QSize) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox(title)
+        group.setStyleSheet(
+            "QGroupBox { background-color: #0b0d0f; border: 1px solid #2c313a; border-radius: 8px;"
+            " padding: 8px; color: #e5e7eb; font-weight: 600; }"
+            "QGroupBox::title { color: #00ffff; left: 8px; }"
+        )
         wrapper = QtWidgets.QVBoxLayout(group)
         label = QtWidgets.QLabel("Нет изображения")
         label.setAlignment(QtCore.Qt.AlignCenter)
-        label.setMinimumSize(200, 140)
-        label.setStyleSheet("background-color: #111; color: #888; border: 1px solid #444;")
+        label.setMinimumSize(minimum)
+        label.setStyleSheet(
+            "background-color: #000; color: #94a3b8; border: 1px solid #2c313a;"
+            " border-radius: 6px;"
+        )
         label.setScaledContents(True)
         wrapper.addWidget(label)
         group.display_label = label  # type: ignore[attr-defined]
@@ -266,6 +307,27 @@ class EventDetailView(QtWidgets.QWidget):
         label.setPixmap(QtGui.QPixmap.fromImage(image))
 
 
+class NavigationTabs(QtWidgets.QTabWidget):
+    """Tab widget с принудительным растяжением панели по ширине окна."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        tab_bar = self.tabBar()
+        tab_bar.setExpanding(True)
+        tab_bar.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
+        )
+        desired_height = max(tab_bar.sizeHint().height(), 44)
+        tab_bar.setFixedHeight(desired_height)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """Главное окно приложения ANPR с вкладками наблюдения, поиска и настроек."""
 
@@ -284,7 +346,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.event_images: Dict[int, Tuple[Optional[QtGui.QImage], Optional[QtGui.QImage]]] = {}
         self.event_cache: Dict[int, Dict] = {}
 
-        self.tabs = QtWidgets.QTabWidget()
+        self.tabs = NavigationTabs()
         self.observation_tab = self._build_observation_tab()
         self.search_tab = self._build_search_tab()
         self.settings_tab = self._build_settings_tab()
@@ -293,13 +355,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.search_tab, "Поиск")
         self.tabs.addTab(self.settings_tab, "Настройки")
 
-        self.setCentralWidget(self.tabs)
+        self._build_status_strip()
+        central = QtWidgets.QWidget()
+        central_layout = QtWidgets.QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.tabs, 1)
+        central_layout.addWidget(self.status_strip, 0)
+
+        self.setCentralWidget(central)
+        self._apply_main_theme()
         self._refresh_events_table()
         self._start_channels()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        # Все параметры панели вкладок обновляются внутри NavigationTabs
 
     # ------------------ Наблюдение ------------------
     def _build_observation_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
+        widget.setObjectName("ObservationRoot")
         layout = QtWidgets.QHBoxLayout(widget)
         layout.setSpacing(10)
 
@@ -343,6 +419,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.events_table.horizontalHeader().setStretchLastSection(True)
         self.events_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.events_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.events_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.events_table.itemSelectionChanged.connect(self._on_event_selected)
         events_layout.addWidget(self.events_table)
         right_column.addWidget(events_group, stretch=3)
@@ -350,7 +427,80 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addLayout(right_column, stretch=2)
 
         self._draw_grid()
+        self._apply_observation_styles(widget)
         return widget
+
+    def _apply_observation_styles(self, widget: QtWidgets.QWidget) -> None:
+        widget.setStyleSheet(
+            "#ObservationRoot { background-color: rgb(23, 25, 29); }"
+            "QLabel { color: #e5e7eb; font-weight: 500; }"
+            "QGroupBox { background-color: #0f1115; border: 1px solid #2c313a;"
+            " border-radius: 10px; margin-top: 8px; color: #e5e7eb; }"
+            "QGroupBox::title { color: #00ffff; subcontrol-origin: margin; left: 10px; }"
+            "QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {"
+            " background-color: #0b0d0f; color: #e5e7eb; border: 1px solid #2c313a;"
+            " border-radius: 6px; padding: 4px 6px; }"
+            "QTableWidget { background-color: rgb(40, 40, 40);"
+            " alternate-background-color: #0b0d0f; color: #cbd5e1; gridline-color: #2c313a;"
+            " selection-background-color: #00ffff; selection-color: #0b1120; border: 1px solid #2c313a; }"
+            "QHeaderView::section { background-color: #101418; color: #ffffff;"
+            " padding: 6px; border: 1px solid #2c313a; font-weight: 700; }"
+            "QScrollBar:vertical { background: #0f1115; width: 12px; margin: 4px;"
+            " border: 1px solid #2c313a; border-radius: 6px; }"
+            "QScrollBar::handle:vertical { background: #2d323b; min-height: 24px;"
+            " border-radius: 6px; border: 1px solid #00ffff; }"
+            "QScrollBar::handle:vertical:hover { background: #00b7d9; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }"
+            "QScrollBar:horizontal { background: #0f1115; height: 12px; margin: 4px;"
+            " border: 1px solid #2c313a; border-radius: 6px; }"
+            "QScrollBar::handle:horizontal { background: #2d323b; min-width: 24px;"
+            " border-radius: 6px; border: 1px solid #00ffff; }"
+            "QScrollBar::handle:horizontal:hover { background: #00b7d9; }"
+            "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }"
+            "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }"
+        )
+
+        self.events_table.setAlternatingRowColors(True)
+        self.events_table.verticalHeader().setVisible(False)
+        self.events_table.setStyleSheet(self.events_table.styleSheet() + "QTableWidget::item { padding: 6px; }")
+        self.last_event_label.setStyleSheet(
+            "color: #e5e7eb; background-color: #0b0d0f; border: 1px solid #2c313a;"
+            " border-radius: 8px; padding: 8px; font-weight: 600;"
+        )
+        self.grid_widget.setStyleSheet("background-color: #000; border: 1px solid #2c313a; border-radius: 10px;")
+        self.events_table.setShowGrid(True)
+
+    def _apply_main_theme(self) -> None:
+        tab_bar = self.tabs.tabBar()
+        tab_bar.setExpanding(True)
+        tab_bar.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
+        )
+        self.tabs.setStyleSheet(
+            "QTabWidget::pane { border: 0; background: rgb(23, 25, 29); }"
+            "QTabWidget::tab-bar { left: 0; right: 0; alignment: center; }"
+            "QTabBar { background: rgb(23, 25, 29); }"
+            "QTabBar::tab { background: #2d323b; color: #9ca3af; padding: 14px 26px;"
+            " margin: 6px; border-radius: 12px; font-weight: 700; min-width: 140px; }"
+            "QTabBar::tab:selected { background: #00ffff; color: #0b1120; }"
+            "QTabBar::tab:!selected { background: #2f3640; color: #cbd5e1; }"
+        )
+
+    def _build_status_strip(self) -> None:
+        self.status_strip = QtWidgets.QFrame()
+        self.status_strip.setObjectName("StatusStrip")
+        self.status_strip.setFixedHeight(28)
+        self.status_strip.setLayout(QtWidgets.QHBoxLayout())
+        self.status_strip.layout().setContentsMargins(12, 4, 12, 4)  # type: ignore[union-attr]
+        self.status_strip.layout().setSpacing(10)  # type: ignore[union-attr]
+        self.status_strip.setStyleSheet(
+            "#StatusStrip { background-color: #0f1115; border-top: 1px solid #2c313a; }"
+            "#StatusStrip QLabel { color: #cbd5e1; font-weight: 500; }"
+        )
+        self.status_label = QtWidgets.QLabel("Системная информация будет доступна здесь")
+        self.status_strip.layout().addWidget(self.status_label)  # type: ignore[union-attr]
+        self.status_strip.layout().addStretch()  # type: ignore[union-attr]
 
     @staticmethod
     def _prepare_optional_datetime(widget: QtWidgets.QDateTimeEdit) -> None:
@@ -433,6 +583,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if event_id:
             self.event_images[event_id] = (frame_image, plate_image)
             self.event_cache[event_id] = event
+        channel_label = self.channel_labels.get(event.get("channel", ""))
+        if channel_label:
+            channel_label.set_plate(event.get("plate", ""))
         self.last_event_label.setText(
             f"{event['timestamp']} | {event['channel']} | {event['plate']} | {event['confidence']:.2f}"
         )
