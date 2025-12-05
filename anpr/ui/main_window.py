@@ -326,6 +326,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.event_cache: Dict[int, Dict] = {}
 
         self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
         self.observation_tab = self._build_observation_tab()
         self.search_tab = self._build_search_tab()
         self.settings_tab = self._build_settings_tab()
@@ -334,7 +337,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.search_tab, "Поиск")
         self.tabs.addTab(self.settings_tab, "Настройки")
 
-        self.setCentralWidget(self.tabs)
+        self._build_status_strip()
+        central = QtWidgets.QWidget()
+        central_layout = QtWidgets.QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.tabs, 1)
+        central_layout.addWidget(self.status_strip, 0)
+
+        self.setCentralWidget(central)
         self._apply_main_theme()
         self._refresh_events_table()
         self._start_channels()
@@ -390,6 +401,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.events_table.horizontalHeader().setStretchLastSection(True)
         self.events_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.events_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.events_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.events_table.itemSelectionChanged.connect(self._on_event_selected)
         events_layout.addWidget(self.events_table)
         right_column.addWidget(events_group, stretch=3)
@@ -415,6 +427,20 @@ class MainWindow(QtWidgets.QMainWindow):
             " selection-background-color: #00ffff; selection-color: #0b1120; border: 1px solid #2c313a; }"
             "QHeaderView::section { background-color: #101418; color: #ffffff;"
             " padding: 6px; border: 1px solid #2c313a; font-weight: 700; }"
+            "QScrollBar:vertical { background: #0f1115; width: 12px; margin: 4px;"
+            " border: 1px solid #2c313a; border-radius: 6px; }"
+            "QScrollBar::handle:vertical { background: #2d323b; min-height: 24px;"
+            " border-radius: 6px; border: 1px solid #00ffff; }"
+            "QScrollBar::handle:vertical:hover { background: #00b7d9; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }"
+            "QScrollBar:horizontal { background: #0f1115; height: 12px; margin: 4px;"
+            " border: 1px solid #2c313a; border-radius: 6px; }"
+            "QScrollBar::handle:horizontal { background: #2d323b; min-width: 24px;"
+            " border-radius: 6px; border: 1px solid #00ffff; }"
+            "QScrollBar::handle:horizontal:hover { background: #00b7d9; }"
+            "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }"
+            "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }"
         )
 
         self.events_table.setAlternatingRowColors(True)
@@ -433,6 +459,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._enforce_tabbar_height()
         self.tabs.setStyleSheet(
             "QTabWidget::pane { border: 0; background: rgb(23, 25, 29); }"
+            "QTabWidget::tab-bar { left: 0; right: 0; alignment: center; }"
             "QTabBar { background: rgb(23, 25, 29); }"
             "QTabBar::tab { background: #2d323b; color: #9ca3af; padding: 14px 26px;"
             " margin: 6px; border-radius: 12px; font-weight: 700; min-width: 140px; }"
@@ -445,6 +472,21 @@ class MainWindow(QtWidgets.QMainWindow):
         desired = max(80, int(self.height() * 0.2))
         if tab_bar.height() != desired:
             tab_bar.setFixedHeight(desired)
+
+    def _build_status_strip(self) -> None:
+        self.status_strip = QtWidgets.QFrame()
+        self.status_strip.setObjectName("StatusStrip")
+        self.status_strip.setFixedHeight(28)
+        self.status_strip.setLayout(QtWidgets.QHBoxLayout())
+        self.status_strip.layout().setContentsMargins(12, 4, 12, 4)  # type: ignore[union-attr]
+        self.status_strip.layout().setSpacing(10)  # type: ignore[union-attr]
+        self.status_strip.setStyleSheet(
+            "#StatusStrip { background-color: #0f1115; border-top: 1px solid #2c313a; }"
+            "#StatusStrip QLabel { color: #cbd5e1; font-weight: 500; }"
+        )
+        self.status_label = QtWidgets.QLabel("Системная информация будет доступна здесь")
+        self.status_strip.layout().addWidget(self.status_label)  # type: ignore[union-attr]
+        self.status_strip.layout().addStretch()  # type: ignore[union-attr]
 
     @staticmethod
     def _prepare_optional_datetime(widget: QtWidgets.QDateTimeEdit) -> None:
