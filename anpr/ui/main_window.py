@@ -599,6 +599,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.periodic_interval_input.setToolTip("Плановое переподключение каждые N минут")
         general_form.addRow("Интервал переподключения:", self.periodic_interval_input)
 
+        db_row = QtWidgets.QHBoxLayout()
+        self.db_dir_input = QtWidgets.QLineEdit()
+        browse_db_btn = QtWidgets.QPushButton("Выбрать...")
+        browse_db_btn.clicked.connect(self._choose_db_dir)
+        db_row.addWidget(self.db_dir_input)
+        db_row.addWidget(browse_db_btn)
+        db_container = QtWidgets.QWidget()
+        db_container.setLayout(db_row)
+        general_form.addRow("Папка БД:", db_container)
+
         screenshot_row = QtWidgets.QHBoxLayout()
         self.screenshot_dir_input = QtWidgets.QLineEdit()
         browse_screenshot_btn = QtWidgets.QPushButton("Выбрать...")
@@ -763,6 +773,7 @@ class MainWindow(QtWidgets.QMainWindow):
         reconnect = self.settings.get_reconnect()
         signal_loss = reconnect.get("signal_loss", {})
         periodic = reconnect.get("periodic", {})
+        self.db_dir_input.setText(self.settings.get_db_dir())
         self.screenshot_dir_input.setText(self.settings.get_screenshot_dir())
 
         self.reconnect_on_loss_checkbox.setChecked(bool(signal_loss.get("enabled", True)))
@@ -777,6 +788,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if directory:
             self.screenshot_dir_input.setText(directory)
 
+    def _choose_db_dir(self) -> None:
+        directory = QtWidgets.QFileDialog.getExistingDirectory(self, "Выбор папки базы данных")
+        if directory:
+            self.db_dir_input.setText(directory)
+
     def _save_general_settings(self) -> None:
         reconnect = {
             "signal_loss": {
@@ -790,9 +806,14 @@ class MainWindow(QtWidgets.QMainWindow):
             },
         }
         self.settings.save_reconnect(reconnect)
+        db_dir = self.db_dir_input.text().strip() or "data/db"
+        os.makedirs(db_dir, exist_ok=True)
+        self.settings.save_db_dir(db_dir)
         screenshot_dir = self.screenshot_dir_input.text().strip() or "data/screenshots"
         self.settings.save_screenshot_dir(screenshot_dir)
         os.makedirs(screenshot_dir, exist_ok=True)
+        self.db = EventDatabase(self.settings.get_db_path())
+        self._refresh_events_table()
         self._start_channels()
 
     def _load_channel_form(self, index: int) -> None:

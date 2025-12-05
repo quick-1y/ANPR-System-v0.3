@@ -38,7 +38,11 @@ class SettingsManager:
                 },
                 "periodic": {"enabled": False, "interval_minutes": 60},
             },
-            "storage": {"events_db": "data/events.db", "screenshots_dir": "data/screenshots"},
+            "storage": {
+                "db_dir": "data/db",
+                "database_file": "anpr.db",
+                "screenshots_dir": "data/screenshots",
+            },
             "tracking": {
                 "best_shots": 3,
                 "cooldown_seconds": 5,
@@ -109,7 +113,11 @@ class SettingsManager:
 
     @staticmethod
     def _storage_defaults() -> Dict[str, Any]:
-        return {"events_db": "data/events.db", "screenshots_dir": "data/screenshots"}
+        return {
+            "db_dir": "data/db",
+            "database_file": "anpr.db",
+            "screenshots_dir": "data/screenshots",
+        }
 
     def _fill_channel_defaults(self, channel: Dict[str, Any], tracking_defaults: Dict[str, Any]) -> bool:
         defaults = self._channel_defaults(tracking_defaults)
@@ -147,6 +155,14 @@ class SettingsManager:
 
         changed = False
         storage = data.get("storage", {})
+
+        # Миграция со старого ключа events_db -> db_dir + database_file
+        if "events_db" in storage:
+            legacy_path = storage.get("events_db", "data/events.db")
+            storage.setdefault("db_dir", os.path.dirname(legacy_path) or ".")
+            storage.setdefault("database_file", os.path.basename(legacy_path) or "anpr.db")
+            changed = True
+
         for key, val in defaults.items():
             if key not in storage:
                 storage[key] = val
@@ -190,9 +206,34 @@ class SettingsManager:
         self.settings["reconnect"] = reconnect_conf
         self._save(self.settings)
 
-    def get_db_path(self) -> str:
+    def get_db_dir(self) -> str:
         storage = self.settings.get("storage", {})
-        return storage.get("events_db", "data/events.db")
+        return storage.get("db_dir", "data/db")
+
+    def get_database_file(self) -> str:
+        storage = self.settings.get("storage", {})
+        return storage.get("database_file", "anpr.db")
+
+    def get_db_path(self) -> str:
+        directory = self.get_db_dir()
+        filename = self.get_database_file()
+        return os.path.join(directory, filename)
+
+    def save_db_dir(self, path: str) -> None:
+        storage = self.settings.get("storage", {})
+        storage["db_dir"] = path
+        self.settings["storage"] = storage
+        self._save(self.settings)
+
+    def save_screenshot_dir(self, path: str) -> None:
+        storage = self.settings.get("storage", {})
+        storage["screenshots_dir"] = path
+        self.settings["storage"] = storage
+        self._save(self.settings)
+
+    def get_screenshot_dir(self) -> str:
+        storage = self.settings.get("storage", {})
+        return storage.get("screenshots_dir", "data/screenshots")
 
     def get_screenshot_dir(self) -> str:
         storage = self.settings.get("storage", {})

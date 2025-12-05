@@ -11,9 +11,9 @@ from logging_manager import get_logger
 class EventDatabase:
     """SQLite-хранилище для последних распознанных номеров."""
 
-    def __init__(self, db_path: str = "data/events.db") -> None:
+    def __init__(self, db_path: str = "data/db/anpr.db") -> None:
         self.db_path = db_path
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
         self._init_db()
         self.logger = get_logger(__name__)
 
@@ -153,9 +153,9 @@ class EventDatabase:
 class AsyncEventDatabase:
     """Асинхронный доступ к SQLite для фоновых потоков распознавания."""
 
-    def __init__(self, db_path: str = "data/events.db") -> None:
+    def __init__(self, db_path: str = "data/db/anpr.db") -> None:
         self.db_path = db_path
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
         self._initialized = False
         self.logger = get_logger(__name__)
 
