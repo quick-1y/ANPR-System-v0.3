@@ -217,11 +217,11 @@ class EventDetailView(QtWidgets.QWidget):
         super().__init__()
         layout = QtWidgets.QVBoxLayout(self)
 
-        self.frame_preview = self._build_preview("Кадр распознавания")
-        layout.addWidget(self.frame_preview)
+        self.frame_preview = self._build_preview("Кадр распознавания", min_height=320, keep_aspect=True)
+        layout.addWidget(self.frame_preview, stretch=3)
 
         bottom_row = QtWidgets.QHBoxLayout()
-        self.plate_preview = self._build_preview("Кадр номера")
+        self.plate_preview = self._build_preview("Кадр номера", min_size=QtCore.QSize(200, 140), keep_aspect=True)
         bottom_row.addWidget(self.plate_preview, 1)
 
         meta_group = QtWidgets.QGroupBox("Данные распознавания")
@@ -229,6 +229,7 @@ class EventDetailView(QtWidgets.QWidget):
             "QGroupBox { background-color: #000; color: white; border: 1px solid #2e2e2e; padding: 6px; }"
             "QLabel { color: white; }"
         )
+        meta_group.setMinimumWidth(220)
         meta_layout = QtWidgets.QFormLayout(meta_group)
         self.time_label = QtWidgets.QLabel("—")
         self.channel_label = QtWidgets.QLabel("—")
@@ -240,16 +241,25 @@ class EventDetailView(QtWidgets.QWidget):
         meta_layout.addRow("Уверенность:", self.conf_label)
         bottom_row.addWidget(meta_group, 1)
 
-        layout.addLayout(bottom_row)
+        layout.addLayout(bottom_row, stretch=1)
 
-    def _build_preview(self, title: str) -> QtWidgets.QGroupBox:
+    def _build_preview(
+        self,
+        title: str,
+        min_height: int = 180,
+        min_size: Optional[QtCore.QSize] = None,
+        keep_aspect: bool = False,
+    ) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox(title)
         wrapper = QtWidgets.QVBoxLayout(group)
         label = QtWidgets.QLabel("Нет изображения")
         label.setAlignment(QtCore.Qt.AlignCenter)
-        label.setMinimumSize(200, 140)
+        if min_size:
+            label.setMinimumSize(min_size)
+        else:
+            label.setMinimumHeight(min_height)
         label.setStyleSheet("background-color: #111; color: #888; border: 1px solid #444;")
-        label.setScaledContents(True)
+        label.setScaledContents(False if keep_aspect else True)
         wrapper.addWidget(label)
         group.display_label = label  # type: ignore[attr-defined]
         return group
@@ -280,17 +290,25 @@ class EventDetailView(QtWidgets.QWidget):
         conf = event.get("confidence")
         self.conf_label.setText(f"{float(conf):.2f}" if conf is not None else "—")
 
-        self._set_image(self.frame_preview, frame_image)
-        self._set_image(self.plate_preview, plate_image)
+        self._set_image(self.frame_preview, frame_image, keep_aspect=True)
+        self._set_image(self.plate_preview, plate_image, keep_aspect=True)
 
-    def _set_image(self, group: QtWidgets.QGroupBox, image: Optional[QtGui.QImage]) -> None:
+    def _set_image(
+        self,
+        group: QtWidgets.QGroupBox,
+        image: Optional[QtGui.QImage],
+        keep_aspect: bool = False,
+    ) -> None:
         label: QtWidgets.QLabel = group.display_label  # type: ignore[attr-defined]
         if image is None:
             label.setPixmap(QtGui.QPixmap())
             label.setText("Нет изображения")
             return
         label.setText("")
-        label.setPixmap(QtGui.QPixmap.fromImage(image))
+        pixmap = QtGui.QPixmap.fromImage(image)
+        if keep_aspect:
+            pixmap = pixmap.scaled(label.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        label.setPixmap(pixmap)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -362,16 +380,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.grid_layout.setSpacing(6)
         left_column.addWidget(self.grid_widget, stretch=4)
 
-        last_event_group = QtWidgets.QGroupBox("Последнее событие")
-        last_event_group.setStyleSheet(
-            "QGroupBox { background-color: #000; color: white; border: 1px solid #2e2e2e; padding: 6px; }"
-        )
-        last_event_layout = QtWidgets.QHBoxLayout(last_event_group)
-        self.last_event_label = QtWidgets.QLabel("—")
-        self.last_event_label.setStyleSheet("color: white; font-size: 20px; font-weight: bold;")
-        last_event_layout.addWidget(self.last_event_label)
-        left_column.addWidget(last_event_group, stretch=1)
-
         layout.addLayout(left_column, stretch=3)
 
         right_column = QtWidgets.QVBoxLayout()
@@ -382,7 +390,7 @@ class MainWindow(QtWidgets.QMainWindow):
         details_layout = QtWidgets.QVBoxLayout(details_group)
         self.event_detail = EventDetailView()
         details_layout.addWidget(self.event_detail)
-        right_column.addWidget(details_group, stretch=2)
+        right_column.addWidget(details_group, stretch=3)
 
         events_group = QtWidgets.QGroupBox("События")
         events_group.setStyleSheet(
@@ -397,12 +405,6 @@ class MainWindow(QtWidgets.QMainWindow):
             "QTableWidget::item { border-bottom: 1px solid #333; }"
             "QTableWidget::item:selected { background-color: #00ffff; color: #000; }"
         )
-        self.events_table.setStyleSheet(
-            "QHeaderView::section { background-color: rgb(23,25,29); color: white; padding: 6px; }"
-            "QTableWidget { background-color: #000; color: lightgray; gridline-color: #333; }"
-            "QTableWidget::item { border-bottom: 1px solid #333; }"
-            "QTableWidget::item:selected { background-color: #00ffff; color: #000; }"
-        )
         self.events_table.horizontalHeader().setStretchLastSection(True)
         self.events_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.events_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
@@ -410,7 +412,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.events_table.verticalHeader().setVisible(False)
         self.events_table.itemSelectionChanged.connect(self._on_event_selected)
         events_layout.addWidget(self.events_table)
-        right_column.addWidget(events_group, stretch=3)
+        right_column.addWidget(events_group, stretch=1)
 
         layout.addLayout(right_column, stretch=2)
 
@@ -515,7 +517,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if event_id:
             self.event_images[event_id] = (frame_image, plate_image)
             self.event_cache[event_id] = event
-        self.last_event_label.setText(str(event.get("plate", "")).upper() or "—")
         channel_label = self.channel_labels.get(event.get("channel", ""))
         if channel_label:
             channel_label.set_last_plate(event.get("plate", ""))
