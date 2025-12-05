@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+# /anpr/ui/main_window.py
+import os
+
 import cv2
 from typing import Dict, List, Optional, Tuple
 
@@ -403,7 +407,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 if label:
                     label.set_status("Нет источника")
                 continue
-            worker = ChannelWorker(channel_conf, self.settings.get_db_path(), reconnect_conf)
+            worker = ChannelWorker(
+                channel_conf,
+                self.settings.get_db_path(),
+                self.settings.get_screenshot_dir(),
+                reconnect_conf,
+            )
             worker.frame_ready.connect(self._update_frame)
             worker.event_ready.connect(self._handle_event)
             worker.status_ready.connect(self._handle_status)
@@ -425,6 +434,18 @@ class MainWindow(QtWidgets.QMainWindow):
             target_size, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation
         )
         label.set_pixmap(pixmap)
+
+    @staticmethod
+    def _load_image_from_path(path: Optional[str]) -> Optional[QtGui.QImage]:
+        if not path or not os.path.exists(path):
+            return None
+        image = cv2.imread(path)
+        if image is None:
+            return None
+        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        height, width, _ = rgb.shape
+        bytes_per_line = 3 * width
+        return QtGui.QImage(rgb.data, width, height, bytes_per_line, QtGui.QImage.Format_RGB888).copy()
 
     def _handle_event(self, event: Dict) -> None:
         event_id = int(event.get("id", 0))
@@ -461,6 +482,12 @@ class MainWindow(QtWidgets.QMainWindow):
         event = self.event_cache.get(event_id)
         images = self.event_images.get(event_id, (None, None))
         frame_image, plate_image = images
+        if event:
+            if frame_image is None and event.get("frame_path"):
+                frame_image = self._load_image_from_path(event.get("frame_path"))
+            if plate_image is None and event.get("plate_path"):
+                plate_image = self._load_image_from_path(event.get("plate_path"))
+            self.event_images[event_id] = (frame_image, plate_image)
         self.event_detail.set_event(event, frame_image, plate_image)
 
     def _refresh_events_table(self, select_id: Optional[int] = None) -> None:
@@ -573,6 +600,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.periodic_interval_input.setSuffix(" мин")
         self.periodic_interval_input.setToolTip("Плановое переподключение каждые N минут")
         general_form.addRow("Интервал переподключения:", self.periodic_interval_input)
+
+        db_row = QtWidgets.QHBoxLayout()
+        self.db_dir_input = QtWidgets.QLineEdit()
+        browse_db_btn = QtWidgets.QPushButton("Выбрать...")
+        browse_db_btn.clicked.connect(self._choose_db_dir)
+        db_row.addWidget(self.db_dir_input)
+        db_row.addWidget(browse_db_btn)
+        db_container = QtWidgets.QWidget()
+        db_container.setLayout(db_row)
+        general_form.addRow("Папка БД:", db_container)
+
+        screenshot_row = QtWidgets.QHBoxLayout()
+        self.screenshot_dir_input = QtWidgets.QLineEdit()
+        browse_screenshot_btn = QtWidgets.QPushButton("Выбрать...")
+        browse_screenshot_btn.clicked.connect(self._choose_screenshot_dir)
+        screenshot_row.addWidget(self.screenshot_dir_input)
+        screenshot_row.addWidget(browse_screenshot_btn)
+        screenshot_container = QtWidgets.QWidget()
+        screenshot_container.setLayout(screenshot_row)
+        general_form.addRow("Папка для скриншотов:", screenshot_container)
 
         save_general_btn = QtWidgets.QPushButton("Сохранить общие настройки")
         save_general_btn.clicked.connect(self._save_general_settings)
@@ -728,6 +775,8 @@ class MainWindow(QtWidgets.QMainWindow):
         reconnect = self.settings.get_reconnect()
         signal_loss = reconnect.get("signal_loss", {})
         periodic = reconnect.get("periodic", {})
+        self.db_dir_input.setText(self.settings.get_db_dir())
+        self.screenshot_dir_input.setText(self.settings.get_screenshot_dir())
 
         self.reconnect_on_loss_checkbox.setChecked(bool(signal_loss.get("enabled", True)))
         self.frame_timeout_input.setValue(int(signal_loss.get("frame_timeout_seconds", 5)))
@@ -735,6 +784,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.periodic_reconnect_checkbox.setChecked(bool(periodic.get("enabled", False)))
         self.periodic_interval_input.setValue(int(periodic.get("interval_minutes", 60)))
+
+    def _choose_screenshot_dir(self) -> None:
+        directory = QtWidgets.QFileDialog.getExistingDirectory(self, "Выбор папки для скриншотов")
+        if directory:
+            self.screenshot_dir_input.setText(directory)
+
+    def _choose_db_dir(self) -> None:
+        directory = QtWidgets.QFileDialog.getExistingDirectory(self, "Выбор папки базы данных")
+        if directory:
+            self.db_dir_input.setText(directory)
 
     def _save_general_settings(self) -> None:
         reconnect = {
@@ -749,6 +808,14 @@ class MainWindow(QtWidgets.QMainWindow):
             },
         }
         self.settings.save_reconnect(reconnect)
+        db_dir = self.db_dir_input.text().strip() or "data/db"
+        os.makedirs(db_dir, exist_ok=True)
+        self.settings.save_db_dir(db_dir)
+        screenshot_dir = self.screenshot_dir_input.text().strip() or "data/screenshots"
+        self.settings.save_screenshot_dir(screenshot_dir)
+        os.makedirs(screenshot_dir, exist_ok=True)
+        self.db = EventDatabase(self.settings.get_db_path())
+        self._refresh_events_table()
         self._start_channels()
 
     def _load_channel_form(self, index: int) -> None:

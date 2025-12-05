@@ -34,7 +34,9 @@
     }
   },
   "storage": {
-    "events_db": "data/events.db"
+    "db_dir": "data/db",
+    "database_file": "anpr.db",
+    "screenshots_dir": "data/screenshots"
   },
   "tracking": {
     "best_shots": 3,

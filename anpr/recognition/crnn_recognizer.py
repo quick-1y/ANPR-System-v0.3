@@ -1,3 +1,4 @@
+# /anpr/recognition/crnn_recognizer.py
 """Обертка для квантованной CRNN-модели."""
 
 from __future__ import annotations
