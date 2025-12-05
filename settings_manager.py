@@ -38,7 +38,11 @@ class SettingsManager:
                 },
                 "periodic": {"enabled": False, "interval_minutes": 60},
             },
-            "storage": {"events_db": "data/events.db"},
+            "storage": {
+                "db_dir": "data/db",
+                "database_file": "anpr.db",
+                "screenshots_dir": "data/screenshots",
+            },
             "tracking": {
                 "best_shots": 3,
                 "cooldown_seconds": 5,
@@ -66,11 +70,15 @@ class SettingsManager:
         changed = False
         tracking_defaults = data.get("tracking", {})
         reconnect_defaults = self._reconnect_defaults()
+        storage_defaults = self._storage_defaults()
         for channel in data.get("channels", []):
             if self._fill_channel_defaults(channel, tracking_defaults):
                 changed = True
 
         if self._fill_reconnect_defaults(data, reconnect_defaults):
+            changed = True
+
+        if self._fill_storage_defaults(data, storage_defaults):
             changed = True
 
         if changed:
@@ -103,6 +111,14 @@ class SettingsManager:
             "periodic": {"enabled": False, "interval_minutes": 60},
         }
 
+    @staticmethod
+    def _storage_defaults() -> Dict[str, Any]:
+        return {
+            "db_dir": "data/db",
+            "database_file": "anpr.db",
+            "screenshots_dir": "data/screenshots",
+        }
+
     def _fill_channel_defaults(self, channel: Dict[str, Any], tracking_defaults: Dict[str, Any]) -> bool:
         defaults = self._channel_defaults(tracking_defaults)
         changed = False
@@ -130,6 +146,28 @@ class SettingsManager:
                         reconnect_section[key][sub_key] = sub_val
                         changed = True
         data["reconnect"] = reconnect_section
+        return changed
+
+    def _fill_storage_defaults(self, data: Dict[str, Any], defaults: Dict[str, Any]) -> bool:
+        if "storage" not in data:
+            data["storage"] = defaults
+            return True
+
+        changed = False
+        storage = data.get("storage", {})
+
+        # Миграция со старого ключа events_db -> db_dir + database_file
+        if "events_db" in storage:
+            legacy_path = storage.get("events_db", "data/events.db")
+            storage.setdefault("db_dir", os.path.dirname(legacy_path) or ".")
+            storage.setdefault("database_file", os.path.basename(legacy_path) or "anpr.db")
+            changed = True
+
+        for key, val in defaults.items():
+            if key not in storage:
+                storage[key] = val
+                changed = True
+        data["storage"] = storage
         return changed
 
     def _save(self, data: Dict[str, Any]) -> None:
@@ -168,9 +206,34 @@ class SettingsManager:
         self.settings["reconnect"] = reconnect_conf
         self._save(self.settings)
 
-    def get_db_path(self) -> str:
+    def get_db_dir(self) -> str:
         storage = self.settings.get("storage", {})
-        return storage.get("events_db", "data/events.db")
+        return storage.get("db_dir", "data/db")
+
+    def get_database_file(self) -> str:
+        storage = self.settings.get("storage", {})
+        return storage.get("database_file", "anpr.db")
+
+    def get_db_path(self) -> str:
+        directory = self.get_db_dir()
+        filename = self.get_database_file()
+        return os.path.join(directory, filename)
+
+    def save_db_dir(self, path: str) -> None:
+        storage = self.settings.get("storage", {})
+        storage["db_dir"] = path
+        self.settings["storage"] = storage
+        self._save(self.settings)
+
+    def save_screenshot_dir(self, path: str) -> None:
+        storage = self.settings.get("storage", {})
+        storage["screenshots_dir"] = path
+        self.settings["storage"] = storage
+        self._save(self.settings)
+
+    def get_screenshot_dir(self) -> str:
+        storage = self.settings.get("storage", {})
+        return storage.get("screenshots_dir", "data/screenshots")
 
     def get_best_shots(self) -> int:
         tracking = self.settings.get("tracking", {})

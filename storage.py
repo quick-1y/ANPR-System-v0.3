@@ -11,14 +11,27 @@ from logging_manager import get_logger
 class EventDatabase:
     """SQLite-хранилище для последних распознанных номеров."""
 
-    def __init__(self, db_path: str = "data/events.db") -> None:
+    def __init__(self, db_path: str = "data/db/anpr.db") -> None:
         self.db_path = db_path
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
         self._init_db()
         self.logger = get_logger(__name__)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
+
+    @staticmethod
+    def _ensure_columns(conn: sqlite3.Connection) -> None:
+        """Добавляет отсутствующие столбцы без уничтожения существующих данных."""
+
+        def _column_exists(name: str) -> bool:
+            cursor = conn.execute("PRAGMA table_info(events)")
+            return any(row[1] == name for row in cursor.fetchall())
+
+        if not _column_exists("frame_path"):
+            conn.execute("ALTER TABLE events ADD COLUMN frame_path TEXT")
+        if not _column_exists("plate_path"):
+            conn.execute("ALTER TABLE events ADD COLUMN plate_path TEXT")
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -30,10 +43,13 @@ class EventDatabase:
                     channel TEXT NOT NULL,
                     plate TEXT NOT NULL,
                     confidence REAL,
-                    source TEXT
+                    source TEXT,
+                    frame_path TEXT,
+                    plate_path TEXT
                 )
                 """
             )
+            self._ensure_columns(conn)
             conn.commit()
 
     def insert_event(
@@ -43,12 +59,17 @@ class EventDatabase:
         confidence: float = 0.0,
         source: str = "",
         timestamp: Optional[str] = None,
+        frame_path: Optional[str] = None,
+        plate_path: Optional[str] = None,
     ) -> int:
         ts = timestamp or datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             cursor = conn.execute(
-                "INSERT INTO events (timestamp, channel, plate, confidence, source) VALUES (?, ?, ?, ?, ?)",
-                (ts, channel, plate, confidence, source),
+                (
+                    "INSERT INTO events (timestamp, channel, plate, confidence, source, frame_path, plate_path)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)"
+                ),
+                (ts, channel, plate, confidence, source, frame_path, plate_path),
             )
             conn.commit()
             self.logger.info(
@@ -132,9 +153,9 @@ class EventDatabase:
 class AsyncEventDatabase:
     """Асинхронный доступ к SQLite для фоновых потоков распознавания."""
 
-    def __init__(self, db_path: str = "data/events.db") -> None:
+    def __init__(self, db_path: str = "data/db/anpr.db") -> None:
         self.db_path = db_path
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
         self._initialized = False
         self.logger = get_logger(__name__)
 
@@ -150,12 +171,26 @@ class AsyncEventDatabase:
                     channel TEXT NOT NULL,
                     plate TEXT NOT NULL,
                     confidence REAL,
-                    source TEXT
+                    source TEXT,
+                    frame_path TEXT,
+                    plate_path TEXT
                 )
                 """
             )
+            await self._ensure_columns(conn)
             await conn.commit()
         self._initialized = True
+
+    async def _ensure_columns(self, conn: aiosqlite.Connection) -> None:
+        async def _column_exists(name: str) -> bool:
+            cursor = await conn.execute("PRAGMA table_info(events)")
+            rows = await cursor.fetchall()
+            return any(row[1] == name for row in rows)
+
+        if not await _column_exists("frame_path"):
+            await conn.execute("ALTER TABLE events ADD COLUMN frame_path TEXT")
+        if not await _column_exists("plate_path"):
+            await conn.execute("ALTER TABLE events ADD COLUMN plate_path TEXT")
 
     async def insert_event_async(
         self,
@@ -164,13 +199,18 @@ class AsyncEventDatabase:
         confidence: float = 0.0,
         source: str = "",
         timestamp: Optional[str] = None,
+        frame_path: Optional[str] = None,
+        plate_path: Optional[str] = None,
     ) -> int:
         await self._ensure_schema()
         ts = timestamp or datetime.now(timezone.utc).isoformat()
         async with aiosqlite.connect(self.db_path) as conn:
             cursor = await conn.execute(
-                "INSERT INTO events (timestamp, channel, plate, confidence, source) VALUES (?, ?, ?, ?, ?)",
-                (ts, channel, plate, confidence, source),
+                (
+                    "INSERT INTO events (timestamp, channel, plate, confidence, source, frame_path, plate_path)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)"
+                ),
+                (ts, channel, plate, confidence, source, frame_path, plate_path),
             )
             await conn.commit()
             self.logger.info(
