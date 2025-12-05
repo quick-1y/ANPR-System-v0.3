@@ -353,6 +353,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._enforce_tabbar_height()
+        self._stretch_tabbar_width()
 
     # ------------------ Наблюдение ------------------
     def _build_observation_tab(self) -> QtWidgets.QWidget:
@@ -456,6 +457,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_main_theme(self) -> None:
         tab_bar = self.tabs.tabBar()
         tab_bar.setExpanding(True)
+        tab_bar.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
+        )
         self._enforce_tabbar_height()
         self.tabs.setStyleSheet(
             "QTabWidget::pane { border: 0; background: rgb(23, 25, 29); }"
@@ -472,6 +476,11 @@ class MainWindow(QtWidgets.QMainWindow):
         desired = max(80, int(self.height() * 0.2))
         if tab_bar.height() != desired:
             tab_bar.setFixedHeight(desired)
+
+    def _stretch_tabbar_width(self) -> None:
+        tab_bar = self.tabs.tabBar()
+        if tab_bar.minimumWidth() != self.tabs.width():
+            tab_bar.setMinimumWidth(self.tabs.width())
 
     def _build_status_strip(self) -> None:
         self.status_strip = QtWidgets.QFrame()
