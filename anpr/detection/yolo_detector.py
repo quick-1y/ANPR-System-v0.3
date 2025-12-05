@@ -1,3 +1,4 @@
+# /anpr/detection/yolo_detector.py
 """Обертка для детектора номерных знаков YOLO."""
 
 from __future__ import annotations

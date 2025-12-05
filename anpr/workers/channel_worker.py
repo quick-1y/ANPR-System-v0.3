@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# /anpr/workers/channel_worker.py
 import asyncio
 import os
 import time

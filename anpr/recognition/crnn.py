@@ -1,3 +1,4 @@
+# /anpr/recognition/crnn.py
 """Скелет CRNN-модели для OCR."""
 
 from __future__ import annotations

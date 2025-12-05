@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# /anpr/detection/motion_detector.py
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -1,3 +1,4 @@
+# /anpr/pipeline/anpr_pipeline.py
 """Пайплайн объединяющий детекцию и OCR."""
 
 from __future__ import annotations
