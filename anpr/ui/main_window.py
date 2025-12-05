@@ -307,6 +307,25 @@ class EventDetailView(QtWidgets.QWidget):
         label.setPixmap(QtGui.QPixmap.fromImage(image))
 
 
+class NavigationTabs(QtWidgets.QTabWidget):
+    """Tab widget с принудительным растяжением панели по ширине окна."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        tab_bar = self.tabBar()
+        desired_height = max(80, min(int(self.height() * 0.2), 160))
+        tab_bar.setFixedHeight(desired_height)
+        tab_bar.setMinimumWidth(self.width())
+        tab_bar.setMaximumWidth(self.width())
+        tab_bar.move(0, 0)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """Главное окно приложения ANPR с вкладками наблюдения, поиска и настроек."""
 
@@ -325,10 +344,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.event_images: Dict[int, Tuple[Optional[QtGui.QImage], Optional[QtGui.QImage]]] = {}
         self.event_cache: Dict[int, Dict] = {}
 
-        self.tabs = QtWidgets.QTabWidget()
-        self.tabs.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
-        )
+        self.tabs = NavigationTabs()
         self.observation_tab = self._build_observation_tab()
         self.search_tab = self._build_search_tab()
         self.settings_tab = self._build_settings_tab()
@@ -352,8 +368,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
-        self._enforce_tabbar_height()
-        self._stretch_tabbar_width()
+        # Все параметры панели вкладок обновляются внутри NavigationTabs
 
     # ------------------ Наблюдение ------------------
     def _build_observation_tab(self) -> QtWidgets.QWidget:
@@ -460,7 +475,6 @@ class MainWindow(QtWidgets.QMainWindow):
         tab_bar.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
         )
-        self._enforce_tabbar_height()
         self.tabs.setStyleSheet(
             "QTabWidget::pane { border: 0; background: rgb(23, 25, 29); }"
             "QTabWidget::tab-bar { left: 0; right: 0; alignment: center; }"
@@ -470,17 +484,6 @@ class MainWindow(QtWidgets.QMainWindow):
             "QTabBar::tab:selected { background: #00ffff; color: #0b1120; }"
             "QTabBar::tab:!selected { background: #2f3640; color: #cbd5e1; }"
         )
-
-    def _enforce_tabbar_height(self) -> None:
-        tab_bar = self.tabs.tabBar()
-        desired = max(80, int(self.height() * 0.2))
-        if tab_bar.height() != desired:
-            tab_bar.setFixedHeight(desired)
-
-    def _stretch_tabbar_width(self) -> None:
-        tab_bar = self.tabs.tabBar()
-        if tab_bar.minimumWidth() != self.tabs.width():
-            tab_bar.setMinimumWidth(self.tabs.width())
 
     def _build_status_strip(self) -> None:
         self.status_strip = QtWidgets.QFrame()
